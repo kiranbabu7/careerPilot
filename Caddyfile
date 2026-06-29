@@ -1,0 +1,7 @@
+{$CADDY_APP_DOMAIN:localhost} {
+	reverse_proxy frontend:3000
+}
+
+{$CADDY_API_DOMAIN:api.localhost} {
+	reverse_proxy backend:8000
+}

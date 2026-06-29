@@ -1,0 +1,181 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-careerpilot}
+      POSTGRES_USER: ${POSTGRES_USER:-careerpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-careerpilot}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-careerpilot} -d ${POSTGRES_DB:-careerpilot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn careerpilot.wsgi:application --bind 0.0.0.0:8000 --workers 2"
+    env_file:
+      - .env
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      POSTGRES_HOST: db
+      DATABASE_URL: postgres://${POSTGRES_USER:-careerpilot}:${POSTGRES_PASSWORD:-careerpilot}@db:5432/${POSTGRES_DB:-careerpilot}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      USE_S3_STORAGE: ${USE_S3_STORAGE:-false}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME:-}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME:-us-east-1}
+    volumes:
+      - media_data:/app/media
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready/')\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    command: celery -A careerpilot worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      POSTGRES_HOST: db
+      DATABASE_URL: postgres://${POSTGRES_USER:-careerpilot}:${POSTGRES_PASSWORD:-careerpilot}@db:5432/${POSTGRES_DB:-careerpilot}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      USE_S3_STORAGE: ${USE_S3_STORAGE:-false}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME:-}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME:-us-east-1}
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A careerpilot inspect ping --timeout 5 2>&1 | grep -q pong",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    command: celery -A careerpilot beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      POSTGRES_HOST: db
+      DATABASE_URL: postgres://${POSTGRES_USER:-careerpilot}:${POSTGRES_PASSWORD:-careerpilot}@db:5432/${POSTGRES_DB:-careerpilot}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      USE_S3_STORAGE: ${USE_S3_STORAGE:-false}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME:-}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME:-us-east-1}
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-${GOOGLE_OAUTH_CLIENT_ID:-}}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    expose:
+      - "3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    env_file:
+      - .env
+    environment:
+      CADDY_APP_DOMAIN: ${CADDY_APP_DOMAIN:-localhost}
+      CADDY_API_DOMAIN: ${CADDY_API_DOMAIN:-api.localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  media_data:
+  caddy_data:
+  caddy_config:

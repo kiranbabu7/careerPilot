@@ -7,12 +7,17 @@ AI-powered career workspace for job search, resume tailoring, interview prep, an
 Monorepo with:
 
 - `frontend/` — Next.js 15, TypeScript, Tailwind, shadcn/ui
-- `backend/` — Django, DRF, PostgreSQL, JWT + Google OAuth
+- `backend/` — Django, DRF, PostgreSQL, Celery, Redis, JWT + Google OAuth
 
 ```
 Frontend → DRF Views → Services → Repositories → PostgreSQL
-                              ↘ Providers → External APIs
+                              ↘ Agents / Providers → External APIs
+                              ↘ Celery workers → Background workflows & scheduled search
 ```
+
+Background work (workflow execution, scheduled job discovery) runs on **Celery workers** backed by **Redis**. **Celery Beat** polls user schedules every five minutes (configurable) and enqueues incremental job searches.
+
+**Workflow orchestration:** All workflow intents (job discovery, interview prep, tailor, cover letter, application tracking, search rerun) run through **LangGraph** graphs in `backend/apps/workflows/langgraph_*.py`. LLM calls use **LangChain** via `backend/apps/providers/llm/`. There is no legacy executor path or feature-flag toggle.
 
 ## Prerequisites
 
@@ -27,9 +32,65 @@ cp .env.example .env
 docker compose up --build
 ```
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000/api/v1
-- Health check: http://localhost:8000/api/v1/health/
+Services started:
+
+| Service | URL / port |
+|---------|------------|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000/api/v1 |
+| PostgreSQL | localhost:5432 |
+| Redis | localhost:6379 |
+| Celery worker | (no HTTP port) |
+| Celery beat | (no HTTP port) |
+
+Health checks:
+
+- Liveness: http://localhost:8000/api/v1/health/live/
+- Readiness (DB + Redis + Celery broker): http://localhost:8000/api/v1/health/ready/
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for local setup, production notes, and testing.
+
+## Production Deployment
+
+The production stack is defined in `docker-compose.prod.yml` and includes:
+
+| Service | Purpose |
+|---------|---------|
+| `caddy` | Public TLS reverse proxy on ports 80/443 |
+| `frontend` | Next.js standalone production server, internal port 3000 |
+| `backend` | Django + Gunicorn API, internal port 8000 |
+| `celery-worker` | Background workflows, agent runs, scheduled search |
+| `celery-beat` | Scheduled job search dispatcher |
+| `db` | PostgreSQL 16 |
+| `redis` | Celery broker/result backend |
+
+Minimal EC2/Amazon Linux flow:
+
+```bash
+sudo dnf update -y
+sudo dnf install -y git docker
+sudo systemctl enable --now docker
+sudo usermod -aG docker ec2-user
+newgrp docker
+
+git clone <repo-url> /opt/careerpilot
+cd /opt/careerpilot
+cp .env.example .env
+# edit .env with production secrets and domains
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Set `CADDY_APP_DOMAIN`, `CADDY_API_DOMAIN`, `NEXT_PUBLIC_API_URL`, `DJANGO_ALLOWED_HOSTS`, and `DJANGO_CORS_ALLOWED_ORIGINS` in `.env` before building. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#production-docker-notes) for the full production checklist.
+
+**Deploying updates:** `git pull` and `docker compose restart` do **not** update production — images must be rebuilt. On the server:
+
+```bash
+cd /opt/careerpilot
+git pull --ff-only
+docker compose -f docker-compose.prod.yml up -d --build backend celery-worker celery-beat frontend
+```
+
+Or run `./scripts/deploy-prod.sh`. Details: [Updating production](docs/DEVELOPMENT.md#updating-production-after-git-pull).
 
 ## Local Development
 
@@ -39,10 +100,23 @@ docker compose up --build
 cd backend
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp ../.env.example ../.env
 python manage.py migrate
 python manage.py runserver
+```
+
+Run Celery locally (requires Redis):
+
+```bash
+celery -A careerpilot worker --loglevel=info
+celery -A careerpilot beat --loglevel=info
+```
+
+After changing backend Python code in Docker, restart the worker — unlike Django `runserver`, Celery does not auto-reload:
+
+```bash
+docker compose restart celery-worker
 ```
 
 ### Frontend
@@ -50,11 +124,11 @@ python manage.py runserver
 ```bash
 cd frontend
 npm install
-cp ../.env.example ../.env.local
+cp ../.env.example .env.local
 npm run dev
 ```
 
-Ensure PostgreSQL is running (via Docker or locally) and `DATABASE_URL` / `POSTGRES_*` vars are set.
+Ensure PostgreSQL and Redis are running (via Docker or locally) and `DATABASE_URL` / `POSTGRES_*` / `CELERY_*` vars are set.
 
 ### Google OAuth
 
@@ -67,7 +141,7 @@ GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
-If you only set `GOOGLE_OAUTH_CLIENT_ID`, Docker Compose will copy it to the frontend automatically.
+If you only set `GOOGLE_OAUTH_CLIENT_ID`, Docker Compose copies it to the frontend automatically.
 
 Restart the frontend after changing `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.
 
@@ -105,6 +179,60 @@ JOB_SEARCH_MAX_RESULTS=30
 
 The provider sends LinkedIn actors `keywords`, `location`, and `maxItems` (plus `searchQuery` when supported). Naukri, Foundit, Indeed, and Google actors can be added later as comma-separated entries, e.g. `linkedin:actor1,indeed:actor2`.
 
+### Scheduled job search (Phase 9)
+
+Users can enable recurring job discovery that runs the full search + evaluation pipeline on a preset interval. Configure via the preferences API (`PATCH /api/v1/users/preferences/`) or **Settings → Scheduled job search**.
+
+| Interval preset | Minutes |
+|-----------------|---------|
+| Every 1 hour | 60 |
+| Every 4 hours | 240 |
+| Every 12 hours | 720 |
+| Every 24 hours | 1440 |
+
+**Requirements:**
+
+- `celery-beat` and `celery-worker` services running (included in `docker compose up`)
+- `APIFY_API_TOKEN` and `APIFY_JOB_ACTOR_IDS` configured
+- User has target roles or career goals and an active resume
+
+**How it works:** Celery Beat polls every `CELERY_BEAT_SCHEDULE_INTERVAL` minutes (default 5) and enqueues `jobs.run_scheduled_job_search` for due users. Each run creates a headless workflow with `context.trigger = "scheduled"`, searches with incremental `posted_since` filtering, then evaluates only new discoveries linked to that workflow.
+
+**Incremental behavior:** Scheduled runs only ingest listings posted since `last_job_search_at`. On the first run, the cutoff is `now - interval`. LinkedIn searches also pass an `f_TPR` time filter when supported.
+
+**Skip visibility:** When a run is skipped (Apify not configured, another workflow running, missing preferences, etc.), the reason is stored in `last_schedule_message` and surfaced in Settings as **Last run** summary via `GET /api/v1/opportunities/schedule-status/`.
+
+**Stale workflows:** Workflows stuck in `RUNNING` for more than 120 minutes are auto-failed before scheduled search runs, so a hung workflow does not block future scheduled searches indefinitely.
+
+**Evaluation scope:** Scheduled evaluation only processes unevaluated opportunities linked to the current workflow's job search. Opportunities from other workflows, pasted JDs (`custom_jd`), and interview-prep synthetic targets are excluded.
+
+Check schedule status: `GET /api/v1/opportunities/schedule-status/`
+
+### Interview prep workflows
+
+Interview prep goals auto-run **planner → interview_prep** (no manual Applications step).
+
+| Scope | How it is detected | Target |
+|-------|-------------------|--------|
+| General / resume-based | Phrases like "general prep", "everything in my resume" | Synthetic opportunity (`General interview prep`) built from preferences + goal |
+| Application-specific | Company name in goal, or phrases like "interview at …" | Highest-priority active application, or saved opportunity |
+
+General prep does not run web search for unknown companies — the synthetic job has no company research. Application-specific prep uses existing job data and any stored company research.
+
+Completed prep workflows show the interview plan inline in the workspace (dismissible panel).
+
+### Workspace chat
+
+When a workflow completes (including scheduled search), the backend seeds a welcome assistant message with contextual **action cards**. The chat panel also offers **quick-reply chips** derived from those actions.
+
+Supported follow-up intents include: list applications, interview prep, rerun search, tailor resume, cover letter, show borderline/rejected roles, research company, generate decision, adjust match threshold, update opportunity status, and help (`FOLLOW_UP_HELP`).
+
+Type **"What can you do?"** or greet the assistant to see contextual next steps.
+
+### Onboarding
+
+Location preference is flexible: users can pick a work-style option (Remote, Hybrid, etc.), type cities, or both. Saving either `remote_preference` or `target_locations` sets `locations_configured`, so onboarding can complete without listing specific cities (e.g. Remote-only).
+
 ## Testing & Quality
 
 ### Backend
@@ -124,20 +252,42 @@ pytest
 
 ```bash
 cd frontend
-npm run lint
-npm run typecheck
+npm run check    # typecheck + lint + unit tests
 ```
 
-## API Endpoints (Phase 1)
+Or individually:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test
+```
+
+### Root Makefile
+
+```bash
+make up          # docker compose up --build
+make test        # backend pytest in Docker (requires `docker compose up -d backend`)
+make lint        # frontend eslint
+make typecheck   # frontend tsc
+```
+
+## API Endpoints (selected)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/health/` | Service health |
+| GET | `/api/v1/health/live/` | Liveness probe |
+| GET | `/api/v1/health/ready/` | Readiness (DB, Redis, Celery) |
 | POST | `/api/v1/auth/register/` | User registration |
 | POST | `/api/v1/auth/login/` | Email/password login |
 | POST | `/api/v1/auth/google/` | Google OAuth login |
 | POST | `/api/v1/auth/refresh/` | Refresh JWT |
 | GET | `/api/v1/auth/me/` | Current user |
+| GET/PATCH | `/api/v1/users/preferences/` | Career + schedule preferences |
+| GET | `/api/v1/opportunities/schedule-status/` | Scheduled search status + last run summary |
+| GET/POST | `/api/v1/workflows/` | Workflow execution |
+| GET/POST | `/api/v1/workflows/{id}/messages/` | Workflow chat messages |
+| GET | `/api/v1/opportunities/` | Discovered opportunities |
 
 ## Phase Scope
 
@@ -145,10 +295,15 @@ npm run typecheck
 |-------|--------|----------|
 | 1 | Done | Project setup, auth, database models, workspace UI shell |
 | 2 | Done | Resume upload/analysis, preferences, dashboard |
-| 3 | Done | Profile enrichment, workflow planner |
+| 3 | Done | Profile enrichment, LangGraph workflow orchestration, agent planner |
 | 4 | Done | Apify job discovery, Tavily enrichment, opportunities UI |
+| 5 | Done | Job evaluation, company research, workflow integration |
+| 6 | Done | Resume tailoring, cover letters, application materials, PDF/LaTeX export |
+| 7 | Done | Application board, interview prep |
+| 8 | Done | Agent run inspection, workflow timeline, decision recommendations |
+| 9 | Done | Celery/Redis workers, scheduled job search, production hardening, observability |
 
-**Not yet implemented:** LangGraph agents, Celery, Greenhouse/Lever direct integrations, application tracking automation.
+**Not yet implemented:** Cloud provisioning (AWS/K8s), Greenhouse/Lever direct integrations, push/email notifications.
 
 ## Project Structure
 
@@ -159,13 +314,19 @@ CareerPilot/
 │   │   ├── users/
 │   │   ├── workflows/
 │   │   ├── agents/
+│   │   ├── jobs/
+│   │   ├── applications/
+│   │   ├── resumes/
 │   │   ├── providers/
 │   │   ├── memory/
 │   │   └── prompts/
 │   └── careerpilot/
 ├── frontend/
 │   └── src/
+├── docs/
+│   └── DEVELOPMENT.md
 ├── docker-compose.yml
+├── Makefile
 └── .env.example
 ```
 
