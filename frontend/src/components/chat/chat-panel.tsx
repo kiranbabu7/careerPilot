@@ -5,6 +5,7 @@ import { Bot, FileUp, Loader2, Paperclip, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { handleTextareaEnterSubmit } from "@/lib/textarea-keydown";
 import { cn } from "@/lib/utils";
 
 export interface ChatMessage {
@@ -85,10 +86,10 @@ export function ChatPanel({
   }, [filePickerRef]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!disabled && inputValue.trim()) onSend();
-    }
+    handleTextareaEnterSubmit(e, onSend, {
+      disabled,
+      hasContent: Boolean(inputValue.trim()),
+    });
   };
 
   return (

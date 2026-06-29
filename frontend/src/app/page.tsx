@@ -17,6 +17,7 @@ import {
   type DashboardSummary,
 } from "@/lib/api";
 import { needsOnboarding } from "@/lib/onboarding";
+import { handleTextareaEnterSubmit } from "@/lib/textarea-keydown";
 import { persistActiveWorkflowId, workspaceUrl } from "@/lib/workflow-session";
 
 const suggestions = [
@@ -144,6 +145,12 @@ export default function HomePage() {
                   <textarea
                     value={goal}
                     onChange={(e) => setGoal(e.target.value)}
+                    onKeyDown={(e) =>
+                      handleTextareaEnterSubmit(e, () => void handleStartWorkflow(), {
+                        disabled: submitting,
+                        hasContent: Boolean(goal.trim()),
+                      })
+                    }
                     placeholder="e.g. Help me land a senior full-stack role at a climate tech company in Austin..."
                     className="min-h-[120px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   />
