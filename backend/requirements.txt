@@ -6,11 +6,18 @@ psycopg[binary]>=3.2,<4.0
 python-dotenv>=1.0,<2.0
 google-auth>=2.35,<3.0
 requests>=2.32,<3.0
+apify-client>=1.8,<2.0
 gunicorn>=23.0,<24.0
 pypdf>=5.0,<6.0
 python-docx>=1.1,<2.0
-
-# Dev / test
-pytest>=8.3,<9.0
-pytest-django>=4.9,<5.0
-factory-boy>=3.3,<4.0
+fpdf2>=2.8,<3.0
+tavily-python>=0.5,<1.0
+celery>=5.4,<6.0
+redis>=5.0,<6.0
+sentry-sdk>=2.19,<3.0
+whitenoise>=6.8,<7.0
+django-storages>=1.14,<2.0
+boto3>=1.35,<2.0
+langgraph>=0.2,<0.3
+langchain-core>=0.3,<0.4
+langchain-openai>=0.2,<0.3
