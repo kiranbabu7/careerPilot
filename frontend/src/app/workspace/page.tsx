@@ -1,184 +1,270 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bot, Loader2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight, Bot, History, Loader2, Radio, Target } from "lucide-react";
 
-import { AgentActivityCard } from "@/components/agents/agent-activity-card";
+import { AgentRunDetailSheet } from "@/components/agents/agent-run-detail-sheet";
+import { DecisionPanel } from "@/components/agents/decision-panel";
+import { WorkflowActivityLog } from "@/components/workflows/workflow-activity-log";
+import { WorkflowHistoryList } from "@/components/workflows/workflow-history-list";
+import { WorkflowMissionControl } from "@/components/workflows/workflow-mission-control";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { AppShell } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { agentsApi, type AgentExecution } from "@/lib/api";
+import { useWorkflowPolling } from "@/hooks/use-workflow-polling";
+import { workflowApi, type WorkflowListItem } from "@/lib/api";
+import {
+  getStoredActiveWorkflowId,
+  persistActiveWorkflowId,
+} from "@/lib/workflow-session";
+import { isWorkflowActive } from "@/lib/workflow-utils";
 
-export default function WorkspacePage() {
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<
-    Array<{ role: "user" | "assistant"; content: string }>
-  >([]);
-  const [agentExecutions, setAgentExecutions] = useState<AgentExecution[]>([]);
-  const [agentsLoading, setAgentsLoading] = useState(true);
+type WorkspaceTab = "active" | "history";
 
-  const loadAgents = useCallback(async () => {
-    setAgentsLoading(true);
+function WorkspacePageFallback() {
+  return (
+    <ProtectedRoute>
+      <AppShell>
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          Loading workspace...
+        </div>
+      </AppShell>
+    </ProtectedRoute>
+  );
+}
+
+function WorkspacePageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const workflowFromUrl = searchParams.get("workflow");
+  const tabFromUrl = searchParams.get("tab");
+
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(
+    tabFromUrl === "history" ? "history" : "active",
+  );
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+  const [workflowHistory, setWorkflowHistory] = useState<WorkflowListItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  const {
+    workflowDetail,
+    timelineItems,
+    initialLoading,
+    error: workflowError,
+    isPolling,
+    refetch: refetchWorkflow,
+  } = useWorkflowPolling(activeWorkflowId);
+
+  const openWorkflow = useCallback(
+    (workflowId: string) => {
+      setActiveWorkflowId(workflowId);
+      persistActiveWorkflowId(workflowId);
+      setActiveTab("active");
+      router.replace(`/workspace?workflow=${workflowId}`);
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    const id = workflowFromUrl ?? getStoredActiveWorkflowId();
+    if (id) {
+      setActiveWorkflowId(id);
+      persistActiveWorkflowId(id);
+      if (!workflowFromUrl) {
+        router.replace(`/workspace?workflow=${id}`);
+      }
+    }
+  }, [workflowFromUrl, router]);
+
+  useEffect(() => {
+    if (tabFromUrl === "history") {
+      setActiveTab("history");
+    }
+  }, [tabFromUrl]);
+
+  const loadWorkflowHistory = useCallback(async () => {
+    setHistoryLoading(true);
     try {
-      const data = await agentsApi.listExecutions();
-      setAgentExecutions(data);
+      const data = await workflowApi.list();
+      setWorkflowHistory(data);
     } catch {
-      setAgentExecutions([]);
+      setWorkflowHistory([]);
     } finally {
-      setAgentsLoading(false);
+      setHistoryLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadAgents();
-  }, [loadAgents]);
+    void loadWorkflowHistory();
+  }, [loadWorkflowHistory]);
 
-  const handleSend = () => {
-    if (!message.trim()) return;
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: message.trim() },
-      {
-        role: "assistant",
-        content:
-          "Workspace chat is a shell for now. Start a goal from Home to run Planner and Job Search agents.",
-      },
-    ]);
-    setMessage("");
-  };
+  useEffect(() => {
+    if (!isPolling && activeWorkflowId) {
+      void loadWorkflowHistory();
+    }
+  }, [isPolling, activeWorkflowId, loadWorkflowHistory]);
 
-  const latestByAgent = agentExecutions.reduce<Record<string, AgentExecution>>(
-    (acc, execution) => {
-      if (!acc[execution.agent_name]) {
-        acc[execution.agent_name] = execution;
-      }
-      return acc;
-    },
-    {},
-  );
+  const hasActiveWorkflow = Boolean(activeWorkflowId);
+  const workflowStatus = workflowDetail?.workflow.status;
+  const showMissionControl =
+    hasActiveWorkflow &&
+    activeTab === "active" &&
+    (initialLoading || workflowDetail || workflowError);
 
-  const displayAgents = ["planner", "job_search"]
-    .map((name) => latestByAgent[name])
-    .filter(Boolean) as AgentExecution[];
+  const workflowAgentRuns = workflowDetail?.agent_executions ?? [];
 
   return (
     <ProtectedRoute>
       <AppShell>
-        <div className="flex h-screen">
-          <section className="flex flex-1 flex-col border-r border-border">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:h-full">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border bg-gradient-to-b from-background via-background to-muted/10 lg:border-r">
             <div className="border-b border-border px-6 py-4">
-              <h1 className="text-lg font-semibold">Workspace</h1>
-              <p className="text-sm text-muted-foreground">
-                Collaborate with CareerPilot agents on your career goals
-              </p>
-            </div>
-
-            <ScrollArea className="flex-1 px-6 py-4">
-              {messages.length === 0 ? (
-                <div className="flex h-full min-h-[320px] flex-col items-center justify-center text-center">
-                  <Bot className="mb-4 h-10 w-10 text-muted-foreground" />
-                  <p className="text-sm font-medium">No conversation yet</p>
-                  <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                    Start by describing what you want to accomplish. Agents will
-                    appear in the activity panel as workflows run.
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-lg font-semibold">Workspace</h1>
+                  <p className="text-sm text-muted-foreground">
+                    Mission control and workspace history for your agent workflows
                   </p>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  {messages.map((msg, index) => (
-                    <div
-                      key={`${msg.role}-${index}`}
-                      className={
-                        msg.role === "user"
-                          ? "ml-auto max-w-[80%] rounded-lg bg-primary px-4 py-3 text-sm text-primary-foreground"
-                          : "max-w-[80%] rounded-lg bg-muted px-4 py-3 text-sm"
-                      }
-                    >
-                      {msg.content}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
+                {isPolling ? (
+                  <span className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                    <Radio className="h-3 w-3 animate-pulse" />
+                    Agents running
+                  </span>
+                ) : hasActiveWorkflow && workflowStatus && isWorkflowActive(workflowStatus) ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : null}
+              </div>
 
-            <div className="border-t border-border p-4">
-              <div className="flex gap-2">
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
+              <div className="mt-4 flex gap-2">
+                <Button
+                  type="button"
+                  variant={activeTab === "active" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setActiveTab("active")}
+                >
+                  <Target className="h-4 w-4" />
+                  Active Mission
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTab === "history" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setActiveTab("history");
+                    router.replace("/workspace?tab=history");
                   }}
-                  placeholder="Describe your goal or ask a question..."
-                  className="min-h-[80px] flex-1 resize-none rounded-lg border border-input bg-background px-4 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-                <Button onClick={handleSend} disabled={!message.trim()}>
-                  Send
+                >
+                  <History className="h-4 w-4" />
+                  Workspace History
                 </Button>
               </div>
             </div>
+
+            {activeTab === "history" ? (
+              <ScrollArea className="flex-1 px-6 py-6">
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Past workspaces with goals, status, and agent run counts. Select one to
+                    reopen its mission control view.
+                  </p>
+                  <WorkflowHistoryList
+                    workflows={workflowHistory}
+                    loading={historyLoading}
+                    activeWorkflowId={activeWorkflowId}
+                    onSelect={openWorkflow}
+                  />
+                </div>
+              </ScrollArea>
+            ) : showMissionControl && activeWorkflowId ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 md:px-6 md:py-5">
+                <WorkflowMissionControl
+                  workflowId={activeWorkflowId}
+                  detail={workflowDetail}
+                  agentRuns={workflowAgentRuns}
+                  initialLoading={initialLoading}
+                  error={workflowError}
+                  isPolling={isPolling}
+                  onViewRun={setSelectedExecutionId}
+                  onWorkflowUpdated={async () => {
+                    await refetchWorkflow();
+                  }}
+                  className="min-h-0 flex-1"
+                />
+              </div>
+            ) : (
+              <ScrollArea className="flex-1 px-6 py-6">
+                <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+                  <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-border/60 bg-card/50">
+                    <Bot className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <p className="text-lg font-medium">Ready for your next mission</p>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                    Describe a career goal on Home to launch a workflow. The planner chooses
+                    which agents run — job search only when discovery is needed.
+                  </p>
+                  <div className="mt-6 flex flex-wrap justify-center gap-3">
+                    <Button asChild>
+                      <Link href="/">
+                        Start from Home
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setActiveTab("history");
+                        router.replace("/workspace?tab=history");
+                      }}
+                    >
+                      Browse history
+                    </Button>
+                  </div>
+                </div>
+              </ScrollArea>
+            )}
           </section>
 
-          <aside className="flex w-[360px] flex-col bg-muted/20">
-            <div className="border-b border-border px-5 py-4">
-              <h2 className="font-semibold">Agent activity</h2>
-              <p className="text-xs text-muted-foreground">
-                Latest Planner and Job Search runs
-              </p>
+          <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-t border-border bg-muted/10 lg:h-full lg:w-[360px] lg:border-t-0 lg:border-l">
+            <WorkflowActivityLog
+              workflowId={hasActiveWorkflow ? activeWorkflowId : null}
+              timelineItems={timelineItems}
+              agentRuns={workflowAgentRuns}
+              isPolling={isPolling}
+              onViewRun={setSelectedExecutionId}
+              className="min-h-0 flex-1 basis-0"
+            />
+
+            <Separator className="shrink-0" />
+
+            <div className="flex max-h-[min(360px,42vh)] min-h-0 shrink-0 flex-col overflow-hidden">
+              <DecisionPanel workflowId={activeWorkflowId} />
             </div>
-
-            <ScrollArea className="flex-1 px-5 py-4">
-              {agentsLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading agent activity...
-                </div>
-              ) : displayAgents.length > 0 ? (
-                <div className="space-y-3">
-                  {displayAgents.map((execution) => (
-                    <AgentActivityCard key={execution.id} execution={execution} />
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {["Planner", "Job Search"].map((name) => (
-                    <Card key={name} className="bg-card/80">
-                      <CardHeader className="p-4 pb-2">
-                        <CardTitle className="flex items-center justify-between text-sm">
-                          {name}
-                          <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
-                            idle
-                          </span>
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="p-4 pt-0 text-xs text-muted-foreground">
-                        Waiting for a workflow run.
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-
-              <Separator className="my-4" />
-
-              <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-                No active runs. Start a goal from{" "}
-                <Link href="/" className="text-primary underline-offset-4 hover:underline">
-                  Home
-                </Link>{" "}
-                to begin.
-              </div>
-            </ScrollArea>
           </aside>
         </div>
+        </div>
+
+        <AgentRunDetailSheet
+          executionId={selectedExecutionId}
+          onClose={() => setSelectedExecutionId(null)}
+        />
       </AppShell>
     </ProtectedRoute>
+  );
+}
+
+export default function WorkspacePage() {
+  return (
+    <Suspense fallback={<WorkspacePageFallback />}>
+      <WorkspacePageContent />
+    </Suspense>
   );
 }
