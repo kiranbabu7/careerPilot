@@ -13,6 +13,7 @@ from apps.resumes.latex_export import (
     compile_latex_to_pdf,
     escape_latex,
     is_pdflatex_available,
+    normalize_cover_letter_content,
     parse_cover_letter_markdown,
     render_cover_letter_latex_document,
     render_latex_document,
@@ -190,7 +191,50 @@ Jane Doe
 """
 
 
+COVER_LETTER_WITH_PLACEHOLDERS = """[Your Name] [Your Address] [Your Phone Number] [Your Email Address]
+[Date]
+Hiring Manager Odixcity Consulting [Company Address - if known, otherwise omit] India
+
+Dear Hiring Manager,
+
+I am excited to apply for the **Backend Engineer** role at Acme Corp.
+
+Sincerely,
+[Your Name]
+"""
+
+
 class TestCoverLetterLatexExport:
+    def test_normalize_cover_letter_strips_letterhead_and_placeholders(self):
+        normalized = normalize_cover_letter_content(
+            COVER_LETTER_WITH_PLACEHOLDERS,
+            company="Odixcity Consulting",
+        )
+        assert normalized.startswith("Dear Hiring Manager")
+        assert "[Your Name]" not in normalized
+        assert "[Date]" not in normalized
+        assert "Sincerely" not in normalized
+        assert "Odixcity Consulting" not in normalized.split("Dear Hiring Manager,")[0]
+
+    def test_render_cover_letter_omits_placeholder_body_lines(self):
+        contact = ResumeContact(
+            full_name="Jane Doe",
+            email="jane@example.com",
+            phone="555-0100",
+            location="Remote",
+        )
+        latex = render_cover_letter_latex_document(
+            COVER_LETTER_WITH_PLACEHOLDERS,
+            contact=contact,
+            company="Odixcity Consulting",
+            job_location="India",
+        )
+        assert "Jane Doe" in latex
+        assert "[Your Name]" not in latex
+        assert "[Date]" not in latex
+        assert "Odixcity Consulting" in latex
+        assert "India" in latex
+
     def test_parse_cover_letter_markdown(self):
         parsed = parse_cover_letter_markdown(COVER_LETTER_SAMPLE)
         assert parsed.salutation == "Dear Hiring Manager,"

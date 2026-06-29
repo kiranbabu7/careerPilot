@@ -65,7 +65,6 @@ class ApplicationMaterialsProvider:
                 f"{resume_excerpt[:500].strip()}\n\n"
                 f"I would welcome the opportunity to discuss how I can contribute to "
                 f"{job_company or 'your team'}.\n\n"
-                f"Sincerely,\n[Candidate]\n\n"
                 f"---\n"
                 f"*Deterministic local draft — configure OPENAI_API_KEY and "
                 f"OPENROUTER_BASE_URL for AI-powered tailoring.*"

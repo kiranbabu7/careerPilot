@@ -13,6 +13,7 @@ from apps.prompts.services import PromptService
 from apps.resumes.materials_provider import ApplicationMaterialsProvider
 from apps.resumes.models import ApplicationMaterialStatus, ApplicationMaterialType
 from apps.resumes.repositories import ApplicationMaterialRepository
+from apps.resumes.latex_export import normalize_cover_letter_content
 
 COVER_LETTER_AGENT_NAME = "cover_letter"
 COVER_LETTER_PROMPT_NAME = "cover_letter"
@@ -57,13 +58,17 @@ class CoverLetterAgent:
                 rendered["rendered_text"],
                 ApplicationMaterialType.COVER_LETTER,
             )
+            content = normalize_cover_letter_content(
+                result.content,
+                company=opportunity.job.company,
+            )
 
             material = self.material_repo.create(
                 user=user,
                 opportunity=opportunity,
                 source_resume=context["active_resume"],
                 material_type=ApplicationMaterialType.COVER_LETTER,
-                content=result.content,
+                content=content,
                 prompt_name=rendered["name"],
                 prompt_version=rendered["version"],
                 model_name=result.model_name,

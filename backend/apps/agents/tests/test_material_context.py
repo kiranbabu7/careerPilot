@@ -3,7 +3,7 @@
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
-from apps.agents.material_context import build_prompt_variables
+from apps.agents.material_context import build_material_context, build_prompt_variables
 from apps.jobs.models import Job, Opportunity, OpportunityStatus
 from apps.resumes.models import Resume
 from apps.users.models import UserPreference
@@ -93,3 +93,50 @@ class TestBuildPromptVariables:
         )
         assert "years_of_experience" in variables
         assert "MUST NOT claim more than" in variables["years_of_experience"]
+
+    def test_includes_candidate_contact_fields(
+        self, user, opportunity, active_resume, preferences
+    ):
+        user.first_name = "Jane"
+        user.last_name = "Doe"
+        user.email = "jane@example.com"
+        user.save(update_fields=["first_name", "last_name", "email"])
+        active_resume.extracted_text = (
+            "Jane Doe\njane@example.com | 555-010-1234 | Remote\n\nWORK EXPERIENCE\n"
+            "Software Engineer --- Acme Corp\nJan 2022 -- Present\n"
+        )
+        active_resume.save(update_fields=["extracted_text"])
+
+        variables = build_prompt_variables(
+            {
+                "user": user,
+                "job": opportunity.job,
+                "preferences": preferences,
+                "evaluation": opportunity.evaluation,
+                "resume_analysis": None,
+                "active_resume": active_resume,
+                "company_research": {},
+            }
+        )
+        assert variables["candidate_name"] == "Jane Doe"
+        assert variables["candidate_email"] == "jane@example.com"
+        assert variables["candidate_phone"] == "555-010-1234"
+        assert variables["candidate_location"] == "Remote"
+        assert variables["letter_date"]
+
+    def test_cover_letter_prompt_renders_without_placeholders(
+        self, user, opportunity, active_resume, preferences
+    ):
+        from apps.prompts.services import PromptService
+
+        user.first_name = "Jane"
+        user.last_name = "Doe"
+        user.email = "jane@example.com"
+        user.save(update_fields=["first_name", "last_name", "email"])
+        context = build_material_context(user, opportunity)
+        variables = build_prompt_variables(context, include_tailored=True)
+        rendered = PromptService().render("cover_letter", variables)
+
+        assert "Jane Doe" in rendered["rendered_text"]
+        assert "body only" in rendered["rendered_text"].lower()
+        assert "do **not** use bracket placeholders" in rendered["rendered_text"].lower()

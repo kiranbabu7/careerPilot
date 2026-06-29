@@ -9,6 +9,7 @@ from apps.resumes.repositories import (
 )
 from apps.resumes.resume_content import (
     compute_years_of_experience,
+    extract_contact_from_sources,
     format_years_of_experience_constraint,
 )
 from apps.users.repositories import UserPreferenceRepository
@@ -41,6 +42,7 @@ def build_material_context(user, opportunity) -> dict:
     )
 
     return {
+        "user": user,
         "active_resume": active_resume,
         "resume_analysis": analysis,
         "preferences": preference,
@@ -105,6 +107,32 @@ def format_resume_analysis(analysis) -> str:
     )
 
 
+def format_candidate_contact(context: dict) -> dict[str, str]:
+    """Contact fields for prompts and material generation."""
+    user = context.get("user")
+    resume = context.get("active_resume")
+    prefs = context.get("preferences")
+    resume_text = (resume.extracted_text or "") if resume else ""
+    target_locations = list(prefs.target_locations or []) if prefs else []
+    if user:
+        contact = extract_contact_from_sources(
+            user=user,
+            resume_text=resume_text,
+            target_locations=target_locations,
+        )
+    else:
+        from apps.resumes.resume_content import ResumeContact
+
+        contact = ResumeContact(full_name="Candidate")
+
+    return {
+        "candidate_name": contact.full_name,
+        "candidate_email": contact.email or "Not provided",
+        "candidate_phone": contact.phone or "Not provided",
+        "candidate_location": contact.location or "Not provided",
+    }
+
+
 def build_prompt_variables(context: dict, *, include_tailored: bool = False) -> dict:
     job = context["job"]
     prefs = context["preferences"]
@@ -114,6 +142,7 @@ def build_prompt_variables(context: dict, *, include_tailored: bool = False) -> 
     resume_text = (resume.extracted_text or "")[:12000]
     reference_date = date.today()
     years = compute_years_of_experience(resume_text, reference_date=reference_date)
+    contact = format_candidate_contact(context)
 
     variables = {
         "job_title": job.title,
@@ -134,6 +163,8 @@ def build_prompt_variables(context: dict, *, include_tailored: bool = False) -> 
             years,
             reference_date=reference_date,
         ),
+        "letter_date": reference_date.strftime("%B %d, %Y"),
+        **contact,
     }
     if include_tailored:
         tailored = context.get("tailored_resume")

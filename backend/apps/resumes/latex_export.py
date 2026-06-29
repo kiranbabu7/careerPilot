@@ -32,6 +32,23 @@ _CLOSING_RE = re.compile(
     re.IGNORECASE,
 )
 _BULLET_RE = re.compile(r"^[-*•]\s+(.+)$")
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]")
+_DATE_LINE_RE = re.compile(
+    r"^(?:\[date\]|"
+    r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+    r"\s+\d{1,2},?\s+\d{4}|"
+    r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4})$",
+    re.IGNORECASE,
+)
+_RECIPIENT_LINE_RE = re.compile(
+    r"^(?:hiring manager\b|\[company address[^\]]*\])",
+    re.IGNORECASE,
+)
+_CONTACT_HEADER_RE = re.compile(
+    r"^(?:\[your (?:name|address|phone|email)[^\]]*\]|"
+    r"(?:name|address|phone|email)\s*:\s*)",
+    re.IGNORECASE,
+)
 
 _LATEX_SPECIAL = {
     "\\": r"\textbackslash{}",
@@ -159,8 +176,52 @@ class CoverLetterParsed:
     signature: str = ""
 
 
-def parse_cover_letter_markdown(content: str) -> CoverLetterParsed:
+def normalize_cover_letter_content(content: str, *, company: str = "") -> str:
+    """Remove letterhead blocks, bracket placeholders, and duplicate closings."""
+    lines = [line.rstrip() for line in content.strip().splitlines()]
+
+    salutation_idx = next(
+        (index for index, line in enumerate(lines) if _SALUTATION_RE.match(line.strip())),
+        None,
+    )
+    if salutation_idx is not None and salutation_idx > 0:
+        lines = lines[salutation_idx:]
+
+    cleaned: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+        if _is_letterhead_line(stripped, company=company):
+            continue
+        stripped = _PLACEHOLDER_RE.sub("", stripped)
+        stripped = re.sub(r"\s{2,}", " ", stripped).strip()
+        if not stripped or _is_placeholder_only(stripped):
+            continue
+        cleaned.append(stripped)
+
+    while cleaned and not cleaned[-1].strip():
+        cleaned.pop()
+
+    while cleaned:
+        tail = cleaned[-1].strip()
+        if tail.startswith(("-", "*", "•")):
+            break
+        if _CLOSING_RE.match(tail) or _is_placeholder_only(tail):
+            cleaned.pop()
+            while cleaned and not cleaned[-1].strip():
+                cleaned.pop()
+            continue
+        break
+
+    return "\n".join(cleaned).strip()
+
+
+def parse_cover_letter_markdown(content: str, *, company: str = "") -> CoverLetterParsed:
     """Split cover letter markdown into salutation, body blocks, closing, signature."""
+    content = normalize_cover_letter_content(content, company=company)
     lines = [line.rstrip() for line in content.strip().splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)
@@ -209,8 +270,10 @@ def render_cover_letter_latex_document(
     letter_date: date | None = None,
 ) -> str:
     template = COVER_LETTER_TEMPLATE_PATH.read_text(encoding="utf-8")
-    parsed = parse_cover_letter_markdown(content)
+    parsed = parse_cover_letter_markdown(content, company=company)
     signature = parsed.signature or contact.full_name
+    if _is_placeholder_only(signature):
+        signature = contact.full_name
     replacements = {
         "{{FULL_NAME}}": escape_latex(contact.full_name),
         "{{CONTACT_LINE}}": _render_cover_letter_contact_line(contact),
@@ -358,19 +421,19 @@ def _render_cover_letter_body(parsed: CoverLetterParsed) -> str:
     for block in parsed.blocks:
         if block.type == "paragraph" and block.text:
             parts.append(
-                f"{_render_inline_markdown(block.text)}\n\n\\vspace{{1em}}\n"
+                f"{_render_inline_markdown(block.text)}\n\n\\vspace{{0.6em}}\n"
             )
         elif block.type == "bullets" and block.items:
             items = "\n    ".join(
                 rf"\item {_render_inline_markdown(item)}" for item in block.items
             )
             parts.append(
-                rf"\begin{{itemize}}"
+                rf"\begin{{itemize}}[topsep=2pt,itemsep=2pt,parsep=0pt,partopsep=0pt]"
                 "\n    "
                 f"{items}"
                 "\n"
                 rf"\end{{itemize}}"
-                "\n\n\\vspace{1em}\n"
+                "\n\n\\vspace{0.6em}\n"
             )
     return "".join(parts)
 
@@ -439,6 +502,10 @@ def _looks_like_signature(line: str, salutation: str) -> bool:
     cleaned = _clean_inline(line)
     if not cleaned:
         return False
+    if cleaned.startswith(("-", "*", "•")) or _BULLET_RE.match(cleaned):
+        return False
+    if _is_placeholder_only(cleaned):
+        return False
     if _SALUTATION_RE.match(cleaned) or _CLOSING_RE.match(cleaned):
         return False
     if len(cleaned.split()) > 6:
@@ -446,3 +513,27 @@ def _looks_like_signature(line: str, salutation: str) -> bool:
     if salutation and cleaned.lower() in salutation.lower():
         return False
     return True
+
+
+def _is_placeholder_only(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    without_placeholders = _PLACEHOLDER_RE.sub("", stripped).strip(" ,")
+    return not without_placeholders
+
+
+def _is_letterhead_line(line: str, *, company: str = "") -> bool:
+    if _CONTACT_HEADER_RE.match(line):
+        return True
+    if _DATE_LINE_RE.match(line):
+        return True
+    if _RECIPIENT_LINE_RE.match(line):
+        return True
+    if _is_placeholder_only(line):
+        return True
+    lowered = line.lower()
+    if company and company.lower() in lowered and "dear " not in lowered:
+        if "hiring manager" in lowered or "[" in line:
+            return True
+    return False

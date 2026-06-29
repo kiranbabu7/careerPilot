@@ -119,7 +119,14 @@ class TestPromptService:
                 "resume_analysis": "Strong backend profile",
                 "resume_text": "Jane Doe",
                 "tailored_resume": "Tailored content",
+                "candidate_name": "Jane Doe",
+                "candidate_email": "jane@example.com",
+                "candidate_phone": "555-0100",
+                "candidate_location": "Remote",
+                "letter_date": "June 29, 2026",
             },
         )
         assert result["source"] == "filesystem"
         assert "Tailored content" in result["rendered_text"]
+        assert "Jane Doe" in result["rendered_text"]
+        assert "body only" in result["rendered_text"].lower()

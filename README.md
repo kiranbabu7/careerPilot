@@ -2,12 +2,23 @@
 
 AI-powered career workspace for job search, resume tailoring, interview prep, and application tracking.
 
+## Tech Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| **Frontend** | Next.js 15, React 19, TypeScript, Tailwind CSS 4, shadcn/ui (Radix UI), Vitest |
+| **Backend** | Django 5.1, Django REST Framework, PostgreSQL 16, Redis 7, Celery 5 (worker + beat), Gunicorn, JWT + Google OAuth |
+| **Agentic AI** | LangGraph (workflow graphs), LangChain (`langchain-core`, `langchain-openai`), structured workflow tools |
+| **LLM** | OpenRouter (OpenAI-compatible API; default model `google/gemini-2.5-flash`) |
+| **External APIs** | Apify (job scrapers), Tavily (company research) |
+| **Infrastructure** | Docker Compose, Caddy (TLS reverse proxy), EC2 deploy path, optional AWS S3 media (django-storages), optional Sentry |
+| **Documents** | pypdf, python-docx, fpdf2 (resume parse + PDF/LaTeX export) |
+
+**Agentic architecture:** Workflow intents (job discovery, interview prep, tailor, cover letter, application tracking, search rerun) compile to **LangGraph** `StateGraph` runners in `backend/apps/workflows/langgraph_*.py`. The planner runs as a graph node; routing branches by intent into subgraphs with tool-executor loops and replanning. LLM calls go through **LangChain** `ChatOpenAI` configured for OpenRouter (`apps/providers/llm/openrouter_chat.py`). Celery workers execute graphs asynchronously; `WorkflowExecution.result` remains the UI polling source of truth.
+
 ## Architecture
 
-Monorepo with:
-
-- `frontend/` — Next.js 15, TypeScript, Tailwind, shadcn/ui
-- `backend/` — Django, DRF, PostgreSQL, Celery, Redis, JWT + Google OAuth
+Monorepo: `frontend/` (Next.js app) and `backend/` (Django API, agents, Celery tasks).
 
 ```
 Frontend → DRF Views → Services → Repositories → PostgreSQL
@@ -16,8 +27,6 @@ Frontend → DRF Views → Services → Repositories → PostgreSQL
 ```
 
 Background work (workflow execution, scheduled job discovery) runs on **Celery workers** backed by **Redis**. **Celery Beat** polls user schedules every five minutes (configurable) and enqueues incremental job searches.
-
-**Workflow orchestration:** All workflow intents (job discovery, interview prep, tailor, cover letter, application tracking, search rerun) run through **LangGraph** graphs in `backend/apps/workflows/langgraph_*.py`. LLM calls use **LangChain** via `backend/apps/providers/llm/`. There is no legacy executor path or feature-flag toggle.
 
 ## Prerequisites
 

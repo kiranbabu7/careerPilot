@@ -177,6 +177,31 @@ class TestCoverLetterAgent:
             status="completed",
         ).exists()
 
+    def test_strips_placeholder_letterhead_from_generated_content(
+        self, user, opportunity, active_resume, preferences
+    ):
+        mock_provider = MagicMock()
+        mock_provider.generate.return_value = MaterialGenerationResult(
+            content=(
+                "[Your Name] [Your Email Address]\n"
+                "[Date]\n"
+                "Hiring Manager Odixcity Consulting India\n\n"
+                "Dear Hiring Manager,\n\n"
+                "I am excited to apply.\n\n"
+                "Sincerely,\n[Your Name]\n"
+            ),
+            model_name="local-fallback",
+            used_fallback=True,
+        )
+        agent = CoverLetterAgent(provider=mock_provider)
+        result = agent.generate(user, opportunity)
+
+        content = result["material"].content
+        assert content.startswith("Dear Hiring Manager")
+        assert "[Your Name]" not in content
+        assert "[Date]" not in content
+        assert "Sincerely" not in content
+
 
 @pytest.mark.django_db
 class TestTailorResumeAPI:
