@@ -1,6 +1,6 @@
 """Resume persistence."""
 
-from apps.resumes.models import Resume, ResumeAnalysis
+from apps.resumes.models import ApplicationMaterial, Resume, ResumeAnalysis
 
 
 class ResumeRepository:
@@ -62,3 +62,49 @@ class ResumeAnalysisRepository:
             if analysis:
                 analyses[str(resume_id)] = analysis
         return analyses
+
+
+class ApplicationMaterialRepository:
+    def create(self, **fields) -> ApplicationMaterial:
+        return ApplicationMaterial.objects.create(**fields)
+
+    def list_for_user(self, user) -> list[ApplicationMaterial]:
+        return list(
+            ApplicationMaterial.objects.filter(user=user)
+            .select_related("opportunity", "opportunity__job", "source_resume")
+            .order_by("-created_at")
+        )
+
+    def list_for_opportunity(self, user, opportunity_id) -> list[ApplicationMaterial]:
+        return list(
+            ApplicationMaterial.objects.filter(
+                user=user,
+                opportunity_id=opportunity_id,
+            )
+            .select_related("source_resume")
+            .order_by("-created_at")
+        )
+
+    def get_for_user(self, user, material_id) -> ApplicationMaterial | None:
+        return (
+            ApplicationMaterial.objects.filter(user=user, id=material_id)
+            .select_related("opportunity", "opportunity__job", "source_resume")
+            .first()
+        )
+
+    def get_latest_for_opportunity(
+        self,
+        user,
+        opportunity_id,
+        material_type: str,
+    ) -> ApplicationMaterial | None:
+        return (
+            ApplicationMaterial.objects.filter(
+                user=user,
+                opportunity_id=opportunity_id,
+                material_type=material_type,
+                status="completed",
+            )
+            .order_by("-created_at")
+            .first()
+        )

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.jobs.models import Job, Opportunity
+from apps.jobs.models import Job, Opportunity, OpportunityStatus
 
 
 class JobSerializer(serializers.ModelSerializer):
@@ -39,6 +39,8 @@ class OpportunitySerializer(serializers.ModelSerializer):
             "status",
             "source_agent",
             "match_context",
+            "match_score",
+            "evaluation",
             "created_at",
             "updated_at",
         )
@@ -56,6 +58,12 @@ class OpportunityListSerializer(serializers.ModelSerializer):
             "status",
             "source_agent",
             "match_context",
+            "match_score",
+            "evaluation",
             "created_at",
         )
         read_only_fields = fields
+
+
+class OpportunityStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=OpportunityStatus.choices)

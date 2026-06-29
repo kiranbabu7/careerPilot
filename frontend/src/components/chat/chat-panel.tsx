@@ -14,13 +14,18 @@ export interface ChatMessage {
   attachmentName?: string;
 }
 
+export interface QuickReply {
+  label: string;
+  value: string;
+}
+
 export type FilePickerRef = { open: () => void };
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   isTyping?: boolean;
-  quickReplies?: string[];
-  onQuickReply?: (reply: string) => void;
+  quickReplies?: QuickReply[];
+  onQuickReply?: (reply: QuickReply) => void;
   inputValue: string;
   onInputChange: (value: string) => void;
   onSend: () => void;
@@ -32,6 +37,10 @@ interface ChatPanelProps {
   quickRepliesDisabled?: boolean;
   fileAttachDisabled?: boolean;
   progress?: { current: number; total: number };
+  typingLabel?: string;
+  renderMessageFooter?: (message: ChatMessage) => React.ReactNode;
+  topContent?: React.ReactNode;
+  bottomContent?: React.ReactNode;
   title?: string;
   subtitle?: string;
   className?: string;
@@ -53,11 +62,14 @@ export function ChatPanel({
   quickRepliesDisabled,
   fileAttachDisabled,
   progress,
+  typingLabel,
+  renderMessageFooter,
+  topContent,
+  bottomContent,
   title = "CareerPilot",
   subtitle,
   className,
 }: ChatPanelProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachDisabled = fileAttachDisabled ?? disabled;
   const repliesDisabled = quickRepliesDisabled ?? disabled;
@@ -72,10 +84,6 @@ export function ChatPanel({
     };
   }, [filePickerRef]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping, quickReplies]);
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -86,7 +94,7 @@ export function ChatPanel({
   return (
     <div
       className={cn(
-        "flex h-full min-h-[480px] flex-col overflow-hidden rounded-xl border border-border bg-card/50 backdrop-blur",
+        "flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card/50 backdrop-blur",
         className,
       )}
     >
@@ -123,7 +131,8 @@ export function ChatPanel({
 
       <ScrollArea className="min-h-0 flex-1 px-5 py-4">
         <div className="space-y-4">
-          {messages.length === 0 && !isTyping ? (
+          {topContent ? <div className="space-y-4 pb-2">{topContent}</div> : null}
+          {messages.length === 0 && !isTyping && !topContent ? (
             <div className="flex min-h-[200px] items-center justify-center text-sm text-muted-foreground">
               Starting conversation...
             </div>
@@ -132,46 +141,55 @@ export function ChatPanel({
             <div
               key={msg.id}
               className={cn(
-                "max-w-[85%] rounded-lg px-4 py-3 text-sm",
-                msg.role === "user"
-                  ? "ml-auto bg-primary text-primary-foreground"
-                  : "bg-muted",
+                "max-w-[85%]",
+                msg.role === "user" ? "ml-auto" : "",
               )}
             >
-              <p className="whitespace-pre-wrap">{msg.content}</p>
-              {msg.attachmentName ? (
-                <p className="mt-2 flex items-center gap-1.5 text-xs opacity-80">
-                  <FileUp className="h-3.5 w-3.5" />
-                  {msg.attachmentName}
-                </p>
-              ) : null}
+              <div
+                className={cn(
+                  "rounded-lg px-4 py-3 text-sm",
+                  msg.role === "user"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted",
+                )}
+              >
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+                {msg.attachmentName ? (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs opacity-80">
+                    <FileUp className="h-3.5 w-3.5" />
+                    {msg.attachmentName}
+                  </p>
+                ) : null}
+              </div>
+              {renderMessageFooter?.(msg)}
             </div>
           ))}
           {isTyping ? (
             <div className="flex max-w-[85%] items-center gap-2 rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              CareerPilot is thinking...
+              {typingLabel ?? "CareerPilot is thinking..."}
             </div>
           ) : null}
-          <div ref={bottomRef} />
         </div>
       </ScrollArea>
+
+      {bottomContent ? (
+        <div className="shrink-0 border-t border-border px-5 py-3">{bottomContent}</div>
+      ) : null}
 
       {quickReplies.length > 0 && !isTyping ? (
         <div className="shrink-0 border-t border-border px-5 py-3">
           <div className="flex flex-wrap gap-2">
             {quickReplies.map((reply) => (
-              <Button
-                key={reply}
+              <button
+                key={`${reply.label}-${reply.value}`}
                 type="button"
-                variant="outline"
-                size="sm"
-                className="h-auto whitespace-normal px-3 py-1.5 text-left text-xs"
                 disabled={repliesDisabled}
                 onClick={() => onQuickReply?.(reply)}
+                className="rounded-lg border border-border bg-muted/30 px-4 py-2 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:bg-muted/50 hover:text-foreground disabled:pointer-events-none disabled:opacity-60"
               >
-                {reply}
-              </Button>
+                {reply.label}
+              </button>
             ))}
           </div>
         </div>

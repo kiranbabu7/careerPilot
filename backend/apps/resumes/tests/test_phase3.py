@@ -2,6 +2,7 @@ import pytest
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from apps.agents.models import AgentExecution
 from apps.memory.models import ActivityEvent, MemoryEntry
@@ -9,6 +10,7 @@ from apps.resumes.tests.test_phase2 import make_resume_file, user
 from apps.users.models import UserPreference
 from apps.users.profile_enrichment import ProfileEnrichmentService
 from apps.workflows.models import WorkflowExecution
+from apps.workflows.services import WorkflowService
 
 
 @pytest.fixture
@@ -178,25 +180,94 @@ class TestWorkflowAPI:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_start_workflow_creates_execution(self, api_client, user):
+    def test_start_workflow_returns_running_immediately(self, api_client, user):
         api_client.force_authenticate(user=user)
-        response = api_client.post(
-            reverse("workflow-list"),
-            {"goal": "Find remote senior backend roles at startups"},
-            format="json",
-        )
+        with patch("apps.workflows.services.dispatch_workflow"):
+            response = api_client.post(
+                reverse("workflow-list"),
+                {"goal": "Find remote senior backend roles at startups"},
+                format="json",
+            )
         assert response.status_code == status.HTTP_201_CREATED
-        assert "workflow" in response.data
-        assert "planner_execution" in response.data
-        assert response.data["planner_execution"]["agent_name"] == "planner"
-        assert response.data["plan_summary"]
-
+        assert response.data["workflow"]["status"] == "running"
+        assert "planner_execution" not in response.data
         assert WorkflowExecution.objects.filter(user=user).count() == 1
+
+    def test_start_workflow_creates_execution(self, api_client, user):
+        from unittest.mock import patch
+
+        from apps.jobs.services import JobSearchService
+
+        api_client.force_authenticate(user=user)
+
+        def run_sync(user_id, workflow_id, goal):
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            workflow_user = User.objects.get(pk=user_id)
+            workflow = WorkflowService().get_execution(workflow_user, workflow_id)
+            WorkflowService().execute_workflow(workflow_user, workflow, goal)
+
+        with patch(
+            "apps.workflows.services.dispatch_workflow",
+            side_effect=run_sync,
+        ), patch.object(JobSearchService, "search") as mock_search:
+            mock_search.return_value = {
+                "query": "test",
+                "location": "",
+                "discovered_count": 0,
+                "total_listings": 0,
+                "provider_summary": {"providers": {}, "errors": []},
+                "errors": [],
+                "opportunities": [],
+            }
+            response = api_client.post(
+                reverse("workflow-list"),
+                {"goal": "Find remote senior backend roles at startups"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        workflow = WorkflowExecution.objects.get(user=user)
+        assert workflow.status == "completed"
         assert AgentExecution.objects.filter(user=user, agent_name="planner").count() == 1
         assert ActivityEvent.objects.filter(
             user=user,
             event_type=ActivityEvent.EventType.WORKFLOW_STARTED,
         ).exists()
+
+    def test_workflow_detail_includes_agent_executions(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        workflow = WorkflowExecution.objects.create(
+            user=user,
+            name="Test workflow",
+            goal="Find roles",
+            status="running",
+        )
+        AgentExecution.objects.create(
+            user=user,
+            workflow_execution=workflow,
+            agent_name="planner",
+            status="running",
+        )
+
+        response = api_client.get(
+            reverse("workflow-detail", kwargs={"workflow_id": workflow.id}),
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["workflow"]["id"] == str(workflow.id)
+        assert len(response.data["agent_executions"]) == 1
+        assert response.data["agent_executions"][0]["agent_name"] == "planner"
+
+    def test_workflow_detail_not_found(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        response = api_client.get(
+            reverse(
+                "workflow-detail",
+                kwargs={"workflow_id": "00000000-0000-0000-0000-000000000001"},
+            ),
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_start_workflow_rejects_empty_goal(self, api_client, user):
         api_client.force_authenticate(user=user)

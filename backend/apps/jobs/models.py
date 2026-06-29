@@ -72,6 +72,8 @@ class Opportunity(BaseModel):
     )
     source_agent = models.CharField(max_length=128, default="job_search")
     match_context = models.TextField(blank=True)
+    match_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    evaluation = models.JSONField(default=dict, blank=True)
 
     objects = SoftDeleteManager()
     all_objects = models.Manager()

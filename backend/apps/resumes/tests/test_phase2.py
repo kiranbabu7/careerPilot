@@ -157,42 +157,25 @@ class TestResumeAnalysisFallback:
     def test_ai_provider_called_when_configured(self, settings, monkeypatch):
         settings.OPENAI_API_KEY = "test-key"
         settings.OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-        captured_payload = {}
+        captured: dict = {}
 
-        def mock_post(url, headers, json, timeout):
-            captured_payload.update(json)
-            class MockResponse:
-                status_code = 200
+        def mock_invoke(prompt_text, **kwargs):
+            captured.update(kwargs)
+            return (
+                '{"summary":"Strong engineer","health_score":85,'
+                '"ats_score":78,"strengths":["Python"],'
+                '"weaknesses":["Metrics"],"missing_keywords":["K8s"],'
+                '"improvement_suggestions":["Add metrics"],'
+                '"extracted_skills":["Python","Django"]}'
+            )
 
-                def raise_for_status(self):
-                    pass
-
-                def json(self):
-                    return {
-                        "choices": [
-                            {
-                                "message": {
-                                    "content": (
-                                        '{"summary":"Strong engineer","health_score":85,'
-                                        '"ats_score":78,"strengths":["Python"],'
-                                        '"weaknesses":["Metrics"],"missing_keywords":["K8s"],'
-                                        '"improvement_suggestions":["Add metrics"],'
-                                        '"extracted_skills":["Python","Django"]}'
-                                    )
-                                }
-                            }
-                        ]
-                    }
-
-            return MockResponse()
-
-        monkeypatch.setattr("apps.resumes.providers.requests.post", mock_post)
+        monkeypatch.setattr("apps.resumes.providers.invoke_openrouter", mock_invoke)
         from apps.resumes.providers import ResumeAnalysisProvider
 
         result = ResumeAnalysisProvider().analyze("Resume text with Python experience")
         assert result.used_fallback is False
         assert result.model_name == "google/gemini-2.5-flash"
-        assert captured_payload["model"] == "google/gemini-2.5-flash"
+        assert captured["model"] == "google/gemini-2.5-flash"
         assert result.health_score == 85
         assert result.ats_score == 78
 
@@ -265,6 +248,22 @@ class TestDashboardAPI:
             "Hyderabad",
             "Bangalore",
         ]
+
+    def test_dashboard_explicit_flexible_completes_locations(self, api_client, user):
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(reverse("dashboard-summary"))
+        missing_keys = {item["key"] for item in response.data["completion_signals"]["missing"]}
+        assert "locations" in missing_keys
+
+        api_client.patch(
+            reverse("user-preferences"),
+            {"remote_preference": "flexible"},
+            format="json",
+        )
+        response = api_client.get(reverse("dashboard-summary"))
+        missing_keys = {item["key"] for item in response.data["completion_signals"]["missing"]}
+        assert "locations" not in missing_keys
 
     def test_dashboard_salary_stays_missing_until_set(self, api_client, user):
         api_client.force_authenticate(user=user)

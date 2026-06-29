@@ -1,0 +1,54 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=0.7in]{geometry}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{headercolor}{RGB}{173,100,82}
+\titleformat{\section}
+  {\color{headercolor}\large\bfseries}
+  {}{0em}{}
+\titlespacing*{\section}{0pt}{10pt}{6pt}
+\pagestyle{empty}
+\newcommand{\header}[1]{\textbf{\color{headercolor}#1}}
+
+\begin{document}
+
+\begin{center}
+{\fontsize{24}{28}\selectfont\bfseries\color{headercolor} {{FULL_NAME}}}\\[0.5em]
+{{CONTACT_LINE}}
+\end{center}
+\color{black}\rule{\linewidth}{0.5pt} \\[0.5ex]
+
+\pagenumbering{gobble}
+\setlength{\parindent}{0pt}
+\vspace{1em}
+
+{\fontsize{12}{14}\selectfont
+{{LETTER_DATE}}
+}
+
+\vspace{1em}
+
+{\fontsize{12}{14}\selectfont
+{{RECIPIENT_BLOCK}}
+}
+
+\vspace{1em}
+
+{\fontsize{12}{14}\selectfont
+{{LETTER_BODY}}
+}
+
+\vspace{1em}
+
+{\fontsize{12}{14}\selectfont
+{{CLOSING}}
+}
+
+\vspace{2em}
+
+{\fontsize{14}{16}\selectfont {{SIGNATURE_NAME}}}
+
+\end{document}

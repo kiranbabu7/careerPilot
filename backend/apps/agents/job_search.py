@@ -19,19 +19,25 @@ class JobSearchAgent:
         self.search_service = search_service or JobSearchService()
         self.agent_repo = agent_repo or AgentExecutionRepository()
 
-    def search(self, user, workflow, context: dict) -> dict:
+    def search(self, user, workflow, context: dict, *, posted_since=None) -> dict:
         started_at = timezone.now()
         execution = self.agent_repo.create(
             user=user,
             workflow_execution=workflow,
             agent_name=JOB_SEARCH_AGENT_NAME,
             status=AgentExecutionStatus.RUNNING,
-            input_data={"goal": context.get("goal"), "context": context},
+            input_data={
+                "goal": context.get("goal"),
+                "context": context,
+                "posted_since": posted_since.isoformat() if posted_since else None,
+            },
             started_at=started_at,
         )
 
         try:
-            result = self.search_service.search(user, workflow, context)
+            result = self.search_service.search(
+                user, workflow, context, posted_since=posted_since
+            )
             completed_at = timezone.now()
             duration_ms = int((completed_at - started_at).total_seconds() * 1000)
 
@@ -83,20 +89,37 @@ class JobSearchAgent:
     def _build_summary(self, result: dict) -> str:
         count = result["discovered_count"]
         query = result["query"]
+        location = result.get("location", "")
         providers = result["provider_summary"].get("providers", {})
         apify = providers.get("apify", {})
         tavily = providers.get("tavily_research", {})
 
-        parts = [f"Job search for '{query}' found {count} opportunities."]
+        location_phrase = f" in {location}" if location else ""
+        parts = [
+            f"Job search for '{query}'{location_phrase} found {count} opportunities."
+        ]
         if apify:
-            parts.append(
+            apify_line = (
                 f"Apify: {apify.get('count', 0)} listings"
                 f" ({apify.get('status', 'unknown')})."
             )
+            if apify.get("error"):
+                apify_line += f" Error: {apify['error']}"
+            parts.append(apify_line)
         if tavily:
             parts.append(
                 f"Tavily enriched {tavily.get('companies_enriched', 0)} companies."
             )
+        if count == 0 and not result["errors"]:
+            if apify.get("configured", False):
+                parts.append(
+                    "No listings matched. Update target roles and locations in your profile."
+                )
+            else:
+                parts.append(
+                    "Configure Apify (APIFY_API_TOKEN and APIFY_JOB_ACTOR_IDS) "
+                    "to enable discovery."
+                )
         if result["errors"]:
             parts.append(f"Partial errors: {len(result['errors'])}.")
         return " ".join(parts)

@@ -2,41 +2,72 @@
 
 import {
   Building2,
-  ExternalLink,
+  ChevronRight,
   MapPin,
-  Newspaper,
   Sparkles,
+  Target,
   Wifi,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import {
+  formatMatchScore,
+  formatSalary,
+  formatSource,
+  isBorderlineMatch,
+  STATUS_LABELS,
+} from "@/components/opportunities/opportunity-utils";
+import { MatchFactorBreakdown } from "@/components/opportunities/match-factor-breakdown";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { Opportunity } from "@/lib/api";
+import type { Opportunity, OpportunityEvaluation } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
-function formatSalary(job: Opportunity["job"]): string | null {
-  const { salary_min, salary_max, salary_currency } = job;
-  if (!salary_min && !salary_max) return null;
-  const currency = salary_currency || "USD";
-  const fmt = (v: string) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 0,
-    }).format(Number(v));
-  if (salary_min && salary_max && salary_min !== salary_max) {
-    return `${fmt(salary_min)} – ${fmt(salary_max)}`;
-  }
-  return fmt(salary_min || salary_max || "0");
+interface OpportunityCardProps {
+  opportunity: Opportunity;
+  onSelect: (id: string) => void;
+  highMatchThreshold?: number;
 }
 
-export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
+function statusBadgeClass(status: string): string {
+  if (status === "saved") return "bg-green-100 text-green-800";
+  if (status === "rejected") return "bg-red-100 text-red-800";
+  if (status === "applied") return "bg-blue-100 text-blue-800";
+  return "bg-muted text-muted-foreground";
+}
+
+export function OpportunityCard({
+  opportunity,
+  onSelect,
+  highMatchThreshold = 70,
+}: OpportunityCardProps) {
   const { job } = opportunity;
   const salary = formatSalary(job);
-  const research = job.company_research;
-  const hasResearch = research?.available && (research.summary || research.snippets?.length);
+  const matchScore = formatMatchScore(opportunity.match_score);
+  const statusLabel = STATUS_LABELS[opportunity.status] ?? opportunity.status;
+  const borderline = isBorderlineMatch(opportunity.match_score, highMatchThreshold);
+  const evaluation: OpportunityEvaluation | null =
+    opportunity.evaluation &&
+    typeof opportunity.evaluation === "object" &&
+    "factors" in opportunity.evaluation
+      ? (opportunity.evaluation as OpportunityEvaluation)
+      : null;
 
   return (
-    <Card className="flex flex-col border-border/80 bg-card/80 transition-colors hover:border-primary/30">
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(opportunity.id)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(opportunity.id);
+        }
+      }}
+      className={cn(
+        "flex cursor-pointer flex-col border-border/80 bg-card/80 transition-colors",
+        "hover:border-primary/40 hover:bg-card hover:shadow-sm",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
       <CardHeader className="space-y-2 p-5 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
@@ -48,11 +79,37 @@ export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
               {job.company}
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium capitalize text-muted-foreground">
-            {job.source}
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            {matchScore ? (
+              <span
+                className={cn(
+                  "flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
+                  borderline
+                    ? "bg-amber-100 text-amber-900"
+                    : "bg-primary/10 text-primary",
+                )}
+              >
+                <Target className="h-3 w-3" />
+                {matchScore}
+                {borderline ? (
+                  <span className="font-medium opacity-80">borderline</span>
+                ) : null}
+              </span>
+            ) : null}
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-xs font-medium",
+                statusBadgeClass(opportunity.status),
+              )}
+            >
+              {statusLabel}
+            </span>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+            {formatSource(job.source)}
+          </span>
           {job.location ? (
             <span className="flex items-center gap-1">
               <MapPin className="h-3 w-3" />
@@ -80,49 +137,20 @@ export function OpportunityCard({ opportunity }: { opportunity: Opportunity }) {
               <Sparkles className="h-3 w-3" />
               Why this match
             </p>
-            <p className="text-muted-foreground">{opportunity.match_context}</p>
-          </div>
-        ) : null}
-
-        {hasResearch ? (
-          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-            <p className="mb-1 flex items-center gap-1 text-xs font-medium">
-              <Newspaper className="h-3 w-3" />
-              Company research
+            <p className="line-clamp-2 text-muted-foreground">
+              {opportunity.match_context}
             </p>
-            {research.summary ? (
-              <p className="text-muted-foreground">{research.summary}</p>
-            ) : null}
-            {research.snippets?.slice(0, 2).map((snippet) => (
-              <p key={snippet.url} className="mt-1 text-xs text-muted-foreground">
-                {snippet.snippet}
-              </p>
-            ))}
           </div>
         ) : null}
 
-        <div className="mt-auto flex flex-wrap gap-2 pt-2">
-          {job.apply_url ? (
-            <Button asChild size="sm">
-              <a href={job.apply_url} target="_blank" rel="noopener noreferrer">
-                Apply
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </Button>
-          ) : null}
-          <Button size="sm" variant="outline" disabled title="Available in Phase 5">
-            Research Company
-          </Button>
-          <Button size="sm" variant="outline" disabled title="Available in Phase 6">
-            Tailor Resume
-          </Button>
-          <Button size="sm" variant="ghost" disabled title="Available in Phase 5">
-            Save
-          </Button>
-          <Button size="sm" variant="ghost" disabled title="Available in Phase 5">
-            Reject
-          </Button>
-        </div>
+        {evaluation?.factors && Object.keys(evaluation.factors).length > 0 ? (
+          <MatchFactorBreakdown evaluation={evaluation} compact />
+        ) : null}
+
+        <p className="mt-auto flex items-center gap-1 pt-2 text-xs font-medium text-primary">
+          View details
+          <ChevronRight className="h-3.5 w-3.5" />
+        </p>
       </CardContent>
     </Card>
   );

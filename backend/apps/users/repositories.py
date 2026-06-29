@@ -1,3 +1,5 @@
+from django.utils import timezone
+
 from apps.users.models import User, UserPreference
 
 
@@ -56,7 +58,19 @@ class UserPreferenceRepository:
 
     def update_preferences(self, user: User, **fields) -> UserPreference:
         preference, _ = self.get_or_create_for_user(user)
+        if "remote_preference" in fields or "target_locations" in fields:
+            fields = {**fields, "locations_configured": True}
         for key, value in fields.items():
             setattr(preference, key, value)
         preference.save()
         return preference
+
+    def list_due_scheduled_searches(self) -> list[UserPreference]:
+        now = timezone.now()
+        return list(
+            UserPreference.objects.filter(
+                job_search_schedule_enabled=True,
+                next_scheduled_run_at__isnull=False,
+                next_scheduled_run_at__lte=now,
+            ).select_related("user")
+        )

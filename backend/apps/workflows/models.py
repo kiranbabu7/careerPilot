@@ -40,3 +40,45 @@ class WorkflowExecution(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.status})"
+
+
+class WorkflowMessageRole(models.TextChoices):
+    USER = "user", "User"
+    ASSISTANT = "assistant", "Assistant"
+    SYSTEM = "system", "System"
+
+
+def empty_metadata() -> dict:
+    return {}
+
+
+class WorkflowMessage(BaseModel):
+    workflow = models.ForeignKey(
+        WorkflowExecution,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="workflow_messages",
+    )
+    role = models.CharField(max_length=16, choices=WorkflowMessageRole.choices)
+    content = models.TextField()
+    actions = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(default=empty_metadata, blank=True, db_default={})
+
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        db_table = "workflow_messages"
+        ordering = ["created_at"]
+
+    def save(self, *args, **kwargs):
+        if self.metadata is None:
+            self.metadata = {}
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.role} @ {self.workflow_id}"

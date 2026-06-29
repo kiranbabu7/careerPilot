@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from apps.resumes.models import Resume, ResumeAnalysis
+from apps.resumes.models import ApplicationMaterial, Resume, ResumeAnalysis
+from apps.resumes.resume_content import content_to_preview_text
 
 
 class ResumeAnalysisSerializer(serializers.ModelSerializer):
@@ -55,3 +56,44 @@ class ResumeListItemSerializer(serializers.Serializer):
         else:
             data["latest_analysis"] = None
         return data
+
+
+class ApplicationMaterialSerializer(serializers.ModelSerializer):
+    opportunity_title = serializers.SerializerMethodField()
+    opportunity_company = serializers.SerializerMethodField()
+    source_resume_filename = serializers.SerializerMethodField()
+    content_preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ApplicationMaterial
+        fields = (
+            "id",
+            "opportunity",
+            "opportunity_title",
+            "opportunity_company",
+            "source_resume",
+            "source_resume_filename",
+            "material_type",
+            "content",
+            "content_preview",
+            "prompt_name",
+            "prompt_version",
+            "model_name",
+            "status",
+            "metadata",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+    def get_content_preview(self, obj) -> str:
+        return content_to_preview_text(obj.content)
+
+    def get_opportunity_title(self, obj) -> str:
+        return obj.opportunity.job.title
+
+    def get_opportunity_company(self, obj) -> str:
+        return obj.opportunity.job.company
+
+    def get_source_resume_filename(self, obj) -> str:
+        return obj.source_resume.original_filename

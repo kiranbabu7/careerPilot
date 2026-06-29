@@ -47,3 +47,53 @@ class AgentExecution(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.agent_name} ({self.status})"
+
+
+class DecisionRecommendationStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
+class DecisionRecommendation(BaseModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="decision_recommendations",
+    )
+    workflow_execution = models.ForeignKey(
+        "workflows.WorkflowExecution",
+        on_delete=models.SET_NULL,
+        related_name="decision_recommendations",
+        null=True,
+        blank=True,
+    )
+    agent_execution = models.ForeignKey(
+        AgentExecution,
+        on_delete=models.SET_NULL,
+        related_name="decision_recommendations",
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=DecisionRecommendationStatus.choices,
+        default=DecisionRecommendationStatus.PENDING,
+    )
+    summary = models.TextField(blank=True)
+    rationale = models.TextField(blank=True)
+    actions = models.JSONField(default=list, blank=True)
+    input_snapshot = models.JSONField(default=dict, blank=True)
+    prompt_name = models.CharField(max_length=128, blank=True)
+    prompt_version = models.PositiveIntegerField(default=1)
+    model_name = models.CharField(max_length=128, blank=True)
+
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        db_table = "decision_recommendations"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Decision ({self.status})"

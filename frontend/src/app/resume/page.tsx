@@ -1,19 +1,44 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, FileText } from "lucide-react";
+import { CheckCircle2, FileText, ScrollText } from "lucide-react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { materialDisplayContent } from "@/components/opportunities/opportunity-utils";
 import { ResumeUpload } from "@/components/profile/resume-upload";
 import { ScoreCard } from "@/components/profile/score-card";
 import { AppShell } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ApiError, resumeApi, type Resume } from "@/lib/api";
+import { ApiError, resumeApi, type ApplicationMaterial, type Resume } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadTailoredResumePdf(material: ApplicationMaterial) {
+  const slug = material.opportunity_title.replace(/\s+/g, "-").toLowerCase().slice(0, 40);
+  try {
+    const blob = await resumeApi.downloadMaterialPdf(material.id);
+    downloadBlob(`tailored-resume-${slug}.pdf`, blob);
+  } catch {
+    downloadBlob(
+      `tailored-resume-${slug}.txt`,
+      new Blob([materialDisplayContent(material)], { type: "text/plain;charset=utf-8" }),
+    );
+  }
+}
 
 export default function ResumePage() {
   const [resumes, setResumes] = useState<Resume[]>([]);
+  const [materials, setMaterials] = useState<ApplicationMaterial[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,8 +46,12 @@ export default function ResumePage() {
 
   const loadResumes = useCallback(async () => {
     try {
-      const data = await resumeApi.list();
+      const [data, materialData] = await Promise.all([
+        resumeApi.list(),
+        resumeApi.materials().catch(() => []),
+      ]);
       setResumes(data);
+      setMaterials(materialData);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load resumes");
@@ -199,6 +228,58 @@ export default function ResumePage() {
                         ) : (
                           <span className="text-xs text-primary">Active</span>
                         )}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {materials.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Tailored versions</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2">
+                    {materials.map((material) => (
+                      <li
+                        key={material.id}
+                        className="flex items-center justify-between rounded-lg border border-border px-4 py-3"
+                      >
+                        <div className="flex items-start gap-2">
+                          <ScrollText className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                          <div>
+                            <p className="text-sm font-medium">
+                              {material.opportunity_title}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {material.opportunity_company}
+                              {" · "}
+                              {material.material_type === "tailored_resume"
+                                ? "Tailored resume"
+                                : "Cover letter"}
+                              {" · "}
+                              {new Date(material.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {material.material_type === "tailored_resume" ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void downloadTailoredResumePdf(material)}
+                            >
+                              Download PDF
+                            </Button>
+                          ) : null}
+                          <Button asChild variant="outline" size="sm">
+                            <Link href={`/opportunities?selected=${material.opportunity}`}>
+                              View role
+                            </Link>
+                          </Button>
+                        </div>
                       </li>
                     ))}
                   </ul>

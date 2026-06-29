@@ -33,6 +33,11 @@ class ActivityEvent(BaseModel):
         PROFILE_ENRICHED = "profile_enriched", "Profile enriched"
         PROFILE_UPDATED = "profile_updated", "Profile updated"
         WORKFLOW_STARTED = "workflow_started", "Workflow started"
+        APPLICATION_CREATED = "application_created", "Application created"
+        APPLICATION_STAGE_CHANGED = "application_stage_changed", "Application stage changed"
+        INTERVIEW_PREP_GENERATED = "interview_prep_generated", "Interview prep generated"
+        DECISION_GENERATED = "decision_generated", "Decision generated"
+        SCHEDULED_SEARCH = "scheduled_search", "Scheduled job search"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

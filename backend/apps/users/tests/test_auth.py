@@ -28,11 +28,16 @@ def user(db):
 
 @pytest.mark.django_db
 class TestHealthEndpoint:
-    def test_health_returns_ok(self, api_client):
+    def test_health_returns_ok(self, api_client, monkeypatch):
+        monkeypatch.setattr("careerpilot.views.check_database", lambda: True)
+        monkeypatch.setattr("careerpilot.views.check_redis", lambda: True)
+        monkeypatch.setattr("careerpilot.views.check_celery_broker", lambda: True)
+
         response = api_client.get(reverse("health"))
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] == "ok"
         assert response.data["database"] == "connected"
+        assert response.data["redis"] == "connected"
 
 
 @pytest.mark.django_db

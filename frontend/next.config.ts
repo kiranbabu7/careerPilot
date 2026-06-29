@@ -6,6 +6,7 @@ const usePolling = process.env.WATCHPACK_POLLING === "true";
 const pollIntervalMs = Number(process.env.WATCHPACK_POLLING_INTERVAL ?? 1000);
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   ...(usePolling && {
     watchOptions: {
       pollIntervalMs,

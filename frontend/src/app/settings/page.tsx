@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { AppShell } from "@/components/layout/app-shell";
@@ -12,7 +12,9 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/auth-context";
 import {
   ApiError,
+  opportunitiesApi,
   preferencesApi,
+  type JobScheduleStatus,
   type UserPreferences,
 } from "@/lib/api";
 import { formatSalaryInrHint, usesInrSalaryContext } from "@/lib/onboarding";
@@ -24,29 +26,129 @@ const REMOTE_OPTIONS = [
   { value: "flexible", label: "Flexible" },
 ];
 
+const SCHEDULE_INTERVAL_OPTIONS = [
+  { value: "off", label: "Off", minutes: null },
+  { value: "60", label: "Every 1 hour", minutes: 60 },
+  { value: "240", label: "Every 4 hours", minutes: 240 },
+  { value: "720", label: "Every 12 hours", minutes: 720 },
+  { value: "1440", label: "Every 24 hours", minutes: 1440 },
+] as const;
+
+function formatScheduleTimestamp(value: string | null | undefined): string {
+  if (!value) return "Not scheduled";
+  return new Date(value).toLocaleString();
+}
+
+function intervalSelectValue(
+  enabled: boolean,
+  intervalMinutes: number | null,
+): string {
+  if (!enabled) return "off";
+  const match = SCHEDULE_INTERVAL_OPTIONS.find(
+    (opt) => opt.minutes === intervalMinutes,
+  );
+  return match ? String(match.minutes) : "60";
+}
+
 export default function SettingsPage() {
   const { user } = useAuth();
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
+  const [scheduleStatus, setScheduleStatus] = useState<JobScheduleStatus | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [scheduleSuccess, setScheduleSuccess] = useState(false);
+
+  const loadPreferences = useCallback(async () => {
+    const [preferences, status] = await Promise.all([
+      preferencesApi.get(),
+      opportunitiesApi.scheduleStatus(),
+    ]);
+    setPrefs(preferences);
+    setScheduleStatus(status);
+  }, []);
 
   useEffect(() => {
-    preferencesApi
-      .get()
-      .then(setPrefs)
+    loadPreferences()
       .catch((err) => {
         setError(err instanceof ApiError ? err.message : "Failed to load preferences");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadPreferences]);
+
+  useEffect(() => {
+    if (!prefs?.job_search_schedule_enabled) return;
+
+    const refreshScheduleStatus = () => {
+      opportunitiesApi
+        .scheduleStatus()
+        .then(setScheduleStatus)
+        .catch(() => {
+          /* keep last known status on transient poll failures */
+        });
+    };
+
+    const intervalId = window.setInterval(refreshScheduleStatus, 30_000);
+    return () => window.clearInterval(intervalId);
+  }, [prefs?.job_search_schedule_enabled]);
 
   const updateField = <K extends keyof UserPreferences>(
     key: K,
     value: UserPreferences[K],
   ) => {
     if (prefs) setPrefs({ ...prefs, [key]: value });
+  };
+
+  const saveSchedule = async (enabled: boolean, intervalMinutes: number | null) => {
+    setScheduleSaving(true);
+    setScheduleError(null);
+    setScheduleSuccess(false);
+    try {
+      const updated = await preferencesApi.update({
+        job_search_schedule_enabled: enabled,
+        job_search_schedule_interval_minutes: intervalMinutes,
+      });
+      setPrefs((current) => (current ? { ...current, ...updated } : updated));
+      const status = await opportunitiesApi.scheduleStatus();
+      setScheduleStatus(status);
+      setScheduleSuccess(true);
+    } catch (err) {
+      setScheduleError(
+        err instanceof ApiError ? err.message : "Failed to update schedule",
+      );
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const handleScheduleToggle = async (enabled: boolean) => {
+    if (!prefs) return;
+    const intervalMinutes = enabled
+      ? prefs.job_search_schedule_interval_minutes ?? 60
+      : null;
+    setPrefs({
+      ...prefs,
+      job_search_schedule_enabled: enabled,
+      job_search_schedule_interval_minutes: intervalMinutes,
+    });
+    await saveSchedule(enabled, intervalMinutes);
+  };
+
+  const handleScheduleIntervalChange = async (value: string) => {
+    if (!prefs) return;
+    const enabled = value !== "off";
+    const intervalMinutes = enabled ? Number(value) : null;
+    setPrefs({
+      ...prefs,
+      job_search_schedule_enabled: enabled,
+      job_search_schedule_interval_minutes: intervalMinutes,
+    });
+    await saveSchedule(enabled, intervalMinutes);
   };
 
   const handleSave = async () => {
@@ -78,6 +180,10 @@ export default function SettingsPage() {
     prefs?.salary_max ?? null,
   );
   const salaryUnitLabel = inrSalaryContext ? "INR" : "USD";
+  const lastRunAt =
+    scheduleStatus?.last_run_at ?? prefs?.last_scheduled_run_at ?? null;
+  const nextRunAt =
+    scheduleStatus?.next_run_at ?? prefs?.next_scheduled_run_at ?? null;
 
   return (
     <ProtectedRoute>
@@ -226,6 +332,100 @@ export default function SettingsPage() {
                 ) : (
                   <p className="text-sm text-destructive">
                     {error ?? "Could not load preferences."}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Scheduled Job Search</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <p className="text-sm text-muted-foreground">
+                  Only fetches jobs posted since your last search.
+                </p>
+
+                {loading ? (
+                  <p className="text-sm text-muted-foreground">Loading schedule...</p>
+                ) : prefs ? (
+                  <>
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <Label htmlFor="schedule-enabled">
+                          Enable automatic job discovery
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Runs search and evaluation on your chosen interval.
+                        </p>
+                      </div>
+                      <input
+                        id="schedule-enabled"
+                        type="checkbox"
+                        checked={prefs.job_search_schedule_enabled}
+                        disabled={scheduleSaving}
+                        onChange={(e) => void handleScheduleToggle(e.target.checked)}
+                        className="h-4 w-4 rounded border border-input accent-primary"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="schedule-interval">Search interval</Label>
+                      <select
+                        id="schedule-interval"
+                        value={intervalSelectValue(
+                          prefs.job_search_schedule_enabled,
+                          prefs.job_search_schedule_interval_minutes,
+                        )}
+                        disabled={scheduleSaving}
+                        onChange={(e) =>
+                          void handleScheduleIntervalChange(e.target.value)
+                        }
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {SCHEDULE_INTERVAL_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Last run</p>
+                        <p className="text-sm text-muted-foreground">
+                          {formatScheduleTimestamp(lastRunAt)}
+                        </p>
+                        {scheduleStatus?.last_run_summary ? (
+                          <p className="text-xs text-muted-foreground">
+                            {scheduleStatus.last_run_summary}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Next run</p>
+                        <p className="text-sm text-muted-foreground">
+                          {prefs.job_search_schedule_enabled
+                            ? formatScheduleTimestamp(nextRunAt)
+                            : "Not scheduled"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {scheduleError ? (
+                      <p className="text-sm text-destructive">{scheduleError}</p>
+                    ) : null}
+                    {scheduleSuccess ? (
+                      <p className="text-sm text-emerald-500">Schedule updated.</p>
+                    ) : null}
+                    {scheduleSaving ? (
+                      <p className="text-sm text-muted-foreground">Saving schedule...</p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-sm text-destructive">
+                    {error ?? "Could not load schedule settings."}
                   </p>
                 )}
               </CardContent>

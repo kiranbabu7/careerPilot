@@ -61,7 +61,7 @@ class DashboardService:
         checks = {
             "target_roles": bool(preference.target_roles),
             "locations": bool(
-                preference.target_locations or preference.remote_preference != "flexible"
+                preference.target_locations or preference.locations_configured
             ),
             "career_goals": bool(preference.career_goals),
             "skills": bool(preference.skills),

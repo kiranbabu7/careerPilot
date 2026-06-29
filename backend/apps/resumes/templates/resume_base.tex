@@ -1,0 +1,93 @@
+\documentclass[10pt, letterpaper]{article}
+
+% Packages
+\usepackage[
+  top=0.45in, bottom=0.45in,
+  left=0.60in, right=0.60in
+]{geometry}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\usepackage{tabularx}
+\usepackage{microtype}
+
+% Colors
+\definecolor{cvpurple}{HTML}{5B2D8E}
+\definecolor{cvgray}{HTML}{555555}
+\definecolor{cvlgray}{HTML}{BBBBBB}
+\definecolor{cvbody}{HTML}{1A1A1A}
+
+% Global settings
+\color{cvbody}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\pagestyle{empty}
+\hypersetup{urlcolor=cvpurple, linkcolor=cvpurple}
+
+% Section heading
+\newcommand{\cvsection}[1]{%
+  \vspace{7pt}%
+  {\color{cvpurple}\bfseries\normalsize #1}%
+  \vspace{1pt}%
+  {\color{cvpurple}\hrule height 0.5pt}%
+  \vspace{3pt}%
+}
+
+% Job heading
+\newcommand{\jobheading}[2]{%
+  \vspace{4pt}%
+  \begin{tabularx}{\textwidth}{@{}X r@{}}
+    {\bfseries #1} & {\small\color{cvgray} #2}
+  \end{tabularx}%
+  \vspace{1pt}%
+}
+
+% Role description
+\newcommand{\roledesc}[1]{%
+  {\small\itshape\color{cvgray} #1}\par\vspace{2pt}%
+}
+
+% Skill row
+\newcommand{\skillrow}[2]{%
+  {\small\textbf{#1}~#2}\par\vspace{1pt}%
+}
+
+% Bullet list
+\newlist{cvlist}{itemize}{1}
+\setlist[cvlist]{
+  label=\textbullet,
+  leftmargin=1.1em,
+  itemsep=0.5pt,
+  parsep=0pt,
+  topsep=1.5pt,
+  partopsep=0pt,
+  before={\small},
+}
+
+\begin{document}
+
+\begin{center}
+  {\Large\bfseries {{FULL_NAME}}}\\[4pt]
+  {\small\color{cvgray}
+    {{CONTACT_LINE}}
+  }
+\end{center}
+\vspace{1pt}
+{\color{cvlgray}\hrule height 0.6pt}
+\vspace{1pt}
+
+\cvsection{PROFESSIONAL SUMMARY}
+{\small
+{{PROFESSIONAL_SUMMARY}}
+}
+
+\cvsection{TECHNICAL SKILLS}
+{{TECHNICAL_SKILLS}}
+
+\cvsection{WORK EXPERIENCE}
+{{WORK_EXPERIENCE}}
+
+\cvsection{EDUCATION}
+{{EDUCATION}}
+
+\end{document}

@@ -57,3 +57,59 @@ class ResumeAnalysis(BaseModel):
 
     def __str__(self) -> str:
         return f"Analysis for {self.resume_id} ({self.model_name})"
+
+
+class ApplicationMaterialType(models.TextChoices):
+    TAILORED_RESUME = "tailored_resume", "Tailored Resume"
+    COVER_LETTER = "cover_letter", "Cover Letter"
+
+
+class ApplicationMaterialStatus(models.TextChoices):
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+
+
+class ApplicationMaterial(BaseModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="application_materials",
+    )
+    opportunity = models.ForeignKey(
+        "jobs.Opportunity",
+        on_delete=models.CASCADE,
+        related_name="application_materials",
+    )
+    source_resume = models.ForeignKey(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="application_materials",
+    )
+    material_type = models.CharField(
+        max_length=32,
+        choices=ApplicationMaterialType.choices,
+    )
+    content = models.TextField()
+    prompt_name = models.CharField(max_length=128)
+    prompt_version = models.PositiveIntegerField(default=1)
+    model_name = models.CharField(max_length=128)
+    status = models.CharField(
+        max_length=32,
+        choices=ApplicationMaterialStatus.choices,
+        default=ApplicationMaterialStatus.COMPLETED,
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        db_table = "application_materials"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "material_type"]),
+            models.Index(fields=["opportunity", "material_type"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.material_type} for {self.opportunity_id}"

@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 
 from django.contrib.auth import authenticate
+from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.jobs.scheduled_search import compute_next_scheduled_run_at
 from apps.memory.services import ActivityService, MemoryService
 from apps.providers.oauth.google import GoogleOAuthProvider, GoogleUserInfo
 from apps.users.repositories import UserPreferenceRepository, UserRepository
@@ -128,6 +130,29 @@ class PreferenceService:
         return UserPreferenceSerializer(preference).data
 
     def update_preferences(self, user, **fields) -> dict:
+        schedule_fields = {
+            "job_search_schedule_enabled",
+            "job_search_schedule_interval_minutes",
+        }
+        if schedule_fields.intersection(fields):
+            preference, _ = self.preference_repo.get_or_create_for_user(user)
+            enabled = fields.get(
+                "job_search_schedule_enabled",
+                preference.job_search_schedule_enabled,
+            )
+            interval = fields.get(
+                "job_search_schedule_interval_minutes",
+                preference.job_search_schedule_interval_minutes,
+            )
+            if enabled:
+                fields["next_scheduled_run_at"] = compute_next_scheduled_run_at(
+                    enabled=True,
+                    interval_minutes=interval,
+                    from_time=timezone.now(),
+                )
+            else:
+                fields["next_scheduled_run_at"] = None
+
         preference = self.preference_repo.update_preferences(user, **fields)
         self.activity_service.record_preferences_updated(user)
         self.memory_service.record_preferences_context(user, preference)

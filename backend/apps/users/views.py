@@ -124,6 +124,8 @@ class PreferencesView(APIView):
             "remote_preference",
             "career_goals",
             "skills",
+            "job_search_schedule_enabled",
+            "job_search_schedule_interval_minutes",
         )
         filtered = {k: v for k, v in request.data.items() if k in writable_fields}
         serializer = UserPreferenceSerializer(data=filtered, partial=True)

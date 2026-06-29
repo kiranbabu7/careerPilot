@@ -6,13 +6,19 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import requests
 from django.conf import settings
+
+from apps.providers.llm.json_output import parse_json_content
+from apps.providers.llm.openrouter_chat import (
+    DEFAULT_OPENROUTER_MODEL,
+    invoke_openrouter,
+    openrouter_configured,
+)
 
 logger = logging.getLogger(__name__)
 
 # Resume analysis uses Gemini 2.5 Flash via OpenRouter exclusively.
-RESUME_ANALYSIS_MODEL = "google/gemini-2.5-flash"
+RESUME_ANALYSIS_MODEL = DEFAULT_OPENROUTER_MODEL
 
 PROMPT_TEMPLATE_PATH = (
     Path(__file__).resolve().parent.parent
@@ -53,7 +59,7 @@ class ResumeAnalysisProvider:
         return self._local_fallback(resume_text, preferences)
 
     def _ai_configured(self) -> bool:
-        return bool(self.api_key and self.base_url)
+        return openrouter_configured()
 
     def _load_prompt(self, resume_text: str, preferences: dict) -> str:
         template = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -68,22 +74,14 @@ class ResumeAnalysisProvider:
 
     def _call_ai(self, resume_text: str, preferences: dict) -> AnalysisResult:
         prompt = self._load_prompt(resume_text, preferences)
-        url = f"{self.base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "response_format": {"type": "json_object"},
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        parsed = self._parse_json_response(content)
+        content = invoke_openrouter(
+            prompt,
+            model=self.model,
+            temperature=0.3,
+            timeout=60,
+            response_format={"type": "json_object"},
+        )
+        parsed = parse_json_content(content)
         return AnalysisResult(
             model_name=self.model,
             raw_summary=parsed.get("summary", ""),

@@ -15,7 +15,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -34,6 +34,8 @@ local_settings.py
 db.sqlite3
 media/
 staticfiles/
+celerybeat-schedule
+celerybeat.pid
 .coverage
 htmlcov/
 .pytest_cache/

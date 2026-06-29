@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ChatPanel, type ChatMessage, type FilePickerRef } from "@/components/chat/chat-panel";
+import { ChatPanel, type ChatMessage, type FilePickerRef, type QuickReply } from "@/components/chat/chat-panel";
 import { useAuth } from "@/contexts/auth-context";
 import {
   ApiError,
@@ -26,6 +26,7 @@ import {
 } from "@/lib/onboarding";
 
 const TYPING_DELAY_MS = 700;
+const COMPLETE_REDIRECT_DELAY_MS = 1500;
 
 function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -97,9 +98,10 @@ export function OnboardingChat({ dashboard, onComplete }: OnboardingChatProps) {
   }, []);
 
   const finishIfDone = useCallback(
-    (summary: DashboardSummary, nextStep: OnboardingStep) => {
+    async (summary: DashboardSummary, nextStep: OnboardingStep) => {
       if (nextStep !== "complete" || completedRef.current) return;
       completedRef.current = true;
+      await new Promise((resolve) => setTimeout(resolve, COMPLETE_REDIRECT_DELAY_MS));
       onComplete(summary);
     },
     [onComplete],
@@ -111,7 +113,7 @@ export function OnboardingChat({ dashboard, onComplete }: OnboardingChatProps) {
       const nextStep = getNextStep(summary, completedStep);
       setActiveStep(nextStep);
       if (nextStep === "complete") {
-        finishIfDone(summary, nextStep);
+        await finishIfDone(summary, nextStep);
       }
       return summary;
     },
@@ -230,7 +232,7 @@ export function OnboardingChat({ dashboard, onComplete }: OnboardingChatProps) {
     const nextStep = getNextStep(summary, "welcome");
     setActiveStep(nextStep);
     if (nextStep === "complete") {
-      finishIfDone(summary, nextStep);
+      await finishIfDone(summary, nextStep);
     }
   };
 
@@ -281,13 +283,13 @@ export function OnboardingChat({ dashboard, onComplete }: OnboardingChatProps) {
     void processUserInput(trimmed);
   };
 
-  const handleQuickReply = (reply: string) => {
+  const handleQuickReply = (reply: QuickReply) => {
     if (isSaving || isTyping) return;
-    if (reply === UPLOAD_RESUME_QUICK_REPLY) {
+    if (reply.value === UPLOAD_RESUME_QUICK_REPLY) {
       filePickerRef.current?.open();
       return;
     }
-    void processUserInput(reply);
+    void processUserInput(reply.value);
   };
 
   const handleResumeUpload = async (file: File) => {
@@ -324,7 +326,7 @@ export function OnboardingChat({ dashboard, onComplete }: OnboardingChatProps) {
       const nextStep = getNextStep(summary, "resume");
       setActiveStep(nextStep);
       if (nextStep === "complete") {
-        finishIfDone(summary, nextStep);
+        await finishIfDone(summary, nextStep);
       }
     } catch (err) {
       setIsTyping(false);
@@ -334,19 +336,22 @@ export function OnboardingChat({ dashboard, onComplete }: OnboardingChatProps) {
     }
   };
 
-  const quickReplies = useMemo(() => {
+  const quickReplies = useMemo((): QuickReply[] => {
     if (isTyping || isSaving) return [];
     switch (activeStep) {
       case "welcome":
-        return ["Yes, let's go", UPLOAD_RESUME_QUICK_REPLY];
+        return [
+          { label: "Yes, let's go", value: "Yes, let's go" },
+          { label: UPLOAD_RESUME_QUICK_REPLY, value: UPLOAD_RESUME_QUICK_REPLY },
+        ];
       case "resume":
-        return [UPLOAD_RESUME_QUICK_REPLY];
+        return [{ label: UPLOAD_RESUME_QUICK_REPLY, value: UPLOAD_RESUME_QUICK_REPLY }];
       case "remote_preference":
-        return REMOTE_QUICK_REPLIES.map((opt) => opt.label);
+        return REMOTE_QUICK_REPLIES.map((opt) => ({ label: opt.label, value: opt.label }));
       case "skills":
-        return ["Skip for now"];
+        return [{ label: "Skip for now", value: "Skip for now" }];
       case "salary":
-        return ["Skip for now"];
+        return [{ label: "Skip for now", value: "Skip for now" }];
       default:
         return [];
     }
