@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 
+from apps.agents.decision_routes import resolve_decision_action_route
 from apps.providers.llm.json_output import parse_json_content
 from apps.providers.llm.openrouter_chat import invoke_openrouter, openrouter_configured
 from apps.resumes.providers import RESUME_ANALYSIS_MODEL
@@ -41,7 +42,7 @@ class DecisionProvider:
     def generate(self, prompt_text: str, context: dict) -> DecisionGenerationResult:
         if self._ai_configured():
             try:
-                return self._call_ai(prompt_text)
+                return self._call_ai(prompt_text, context)
             except Exception:
                 logger.exception(
                     "AI decision generation failed; using deterministic fallback"
@@ -51,7 +52,7 @@ class DecisionProvider:
     def _ai_configured(self) -> bool:
         return openrouter_configured()
 
-    def _call_ai(self, prompt_text: str) -> DecisionGenerationResult:
+    def _call_ai(self, prompt_text: str, context: dict) -> DecisionGenerationResult:
         raw = invoke_openrouter(
             prompt_text,
             model=self.model,
@@ -62,7 +63,7 @@ class DecisionProvider:
         return DecisionGenerationResult(
             summary=str(parsed.get("summary", "")),
             rationale=str(parsed.get("rationale", "")),
-            actions=self._normalize_actions(parsed.get("actions", [])),
+            actions=self._normalize_actions(parsed.get("actions", []), context),
             model_name=self.model,
             used_fallback=False,
         )
@@ -74,7 +75,9 @@ class DecisionProvider:
             cleaned = re.sub(r"\s*```$", "", cleaned)
         return json.loads(cleaned)
 
-    def _normalize_actions(self, actions: list) -> list[dict]:
+    def _normalize_actions(self, actions: list, context: dict | None = None) -> list[dict]:
+        context = context or {}
+        workflow_id = context.get("workflow_id")
         normalized = []
         for action in actions:
             if not isinstance(action, dict):
@@ -85,16 +88,19 @@ class DecisionProvider:
             urgency = str(action.get("urgency", "medium"))
             if urgency not in VALID_URGENCY:
                 urgency = "medium"
-            normalized.append(
-                {
-                    "action_type": action_type,
-                    "target_id": str(action.get("target_id", "")),
-                    "title": str(action.get("title", "Review next step")),
-                    "reason": str(action.get("reason", "")),
-                    "urgency": urgency,
-                    "route": str(action.get("route", "/")),
-                }
+            payload = {
+                "action_type": action_type,
+                "target_id": str(action.get("target_id", "")),
+                "title": str(action.get("title", "Review next step")),
+                "reason": str(action.get("reason", "")),
+                "urgency": urgency,
+                "route": str(action.get("route", "/")),
+            }
+            payload["route"] = resolve_decision_action_route(
+                payload,
+                workflow_id=str(workflow_id) if workflow_id else None,
             )
+            normalized.append(payload)
         return normalized[:6]
 
     def _deterministic_fallback(self, context: dict) -> DecisionGenerationResult:
@@ -199,7 +205,7 @@ class DecisionProvider:
         return DecisionGenerationResult(
             summary=summary,
             rationale=rationale,
-            actions=self._normalize_actions(actions),
+            actions=self._normalize_actions(actions, context),
             model_name="deterministic-fallback",
             used_fallback=True,
         )

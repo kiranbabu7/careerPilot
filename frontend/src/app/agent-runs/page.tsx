@@ -208,8 +208,14 @@ function AgentRunsPageContent() {
 
           {decisionDetail ? (
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between gap-3">
                 <CardTitle className="text-base">Decision detail</CardTitle>
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/decisions?selected=${decisionDetail.id}`}>
+                    <ExternalLink className="h-4 w-4" />
+                    Open in Decisions
+                  </Link>
+                </Button>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <p className="font-medium">{decisionDetail.summary}</p>

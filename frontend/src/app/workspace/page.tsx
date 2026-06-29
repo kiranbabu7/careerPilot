@@ -1,12 +1,11 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Bot, History, Loader2, Radio, Target } from "lucide-react";
 
 import { AgentRunDetailSheet } from "@/components/agents/agent-run-detail-sheet";
-import { DecisionPanel } from "@/components/agents/decision-panel";
 import { WorkflowActivityLog } from "@/components/workflows/workflow-activity-log";
 import { WorkflowHistoryList } from "@/components/workflows/workflow-history-list";
 import { WorkflowMissionControl } from "@/components/workflows/workflow-mission-control";
@@ -14,9 +13,8 @@ import { ProtectedRoute } from "@/components/auth/protected-route";
 import { AppShell } from "@/components/layout/app-shell";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { useWorkflowPolling } from "@/hooks/use-workflow-polling";
-import { workflowApi, type WorkflowListItem } from "@/lib/api";
+import { ApiError, workflowApi, type WorkflowListItem } from "@/lib/api";
 import {
   getStoredActiveWorkflowId,
   persistActiveWorkflowId,
@@ -42,6 +40,7 @@ function WorkspacePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const workflowFromUrl = searchParams.get("workflow");
+  const goalFromUrl = searchParams.get("goal");
   const tabFromUrl = searchParams.get("tab");
 
   const [activeTab, setActiveTab] = useState<WorkspaceTab>(
@@ -51,6 +50,9 @@ function WorkspacePageContent() {
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const [workflowHistory, setWorkflowHistory] = useState<WorkflowListItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [goalStartError, setGoalStartError] = useState<string | null>(null);
+  const [startingFromGoal, setStartingFromGoal] = useState(false);
+  const goalStartAttemptedRef = useRef(false);
 
   const {
     workflowDetail,
@@ -72,6 +74,36 @@ function WorkspacePageContent() {
   );
 
   useEffect(() => {
+    if (!goalFromUrl || workflowFromUrl || activeWorkflowId || goalStartAttemptedRef.current) {
+      return;
+    }
+
+    const trimmedGoal = goalFromUrl.trim();
+    if (!trimmedGoal) return;
+
+    goalStartAttemptedRef.current = true;
+    setStartingFromGoal(true);
+    setGoalStartError(null);
+
+    void workflowApi
+      .start(trimmedGoal)
+      .then(({ workflow }) => {
+        openWorkflow(workflow.id);
+      })
+      .catch((err) => {
+        goalStartAttemptedRef.current = false;
+        setGoalStartError(
+          err instanceof ApiError ? err.message : "Failed to start workflow from goal.",
+        );
+      })
+      .finally(() => {
+        setStartingFromGoal(false);
+      });
+  }, [goalFromUrl, workflowFromUrl, activeWorkflowId, openWorkflow]);
+
+  useEffect(() => {
+    if (goalFromUrl?.trim()) return;
+
     const id = workflowFromUrl ?? getStoredActiveWorkflowId();
     if (id) {
       setActiveWorkflowId(id);
@@ -203,13 +235,23 @@ function WorkspacePageContent() {
               <ScrollArea className="flex-1 px-6 py-6">
                 <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
                   <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-border/60 bg-card/50">
-                    <Bot className="h-8 w-8 text-muted-foreground" />
+                    {startingFromGoal ? (
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    ) : (
+                      <Bot className="h-8 w-8 text-muted-foreground" />
+                    )}
                   </div>
-                  <p className="text-lg font-medium">Ready for your next mission</p>
-                  <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                    Describe a career goal on Home to launch a workflow. The planner chooses
-                    which agents run — job search only when discovery is needed.
+                  <p className="text-lg font-medium">
+                    {startingFromGoal ? "Starting your mission..." : "Ready for your next mission"}
                   </p>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                    {startingFromGoal
+                      ? "Launching a workspace from your recommended action."
+                      : "Describe a career goal on Home to launch a workflow. The planner chooses which agents run — job search only when discovery is needed."}
+                  </p>
+                  {goalStartError ? (
+                    <p className="mt-3 max-w-md text-sm text-destructive">{goalStartError}</p>
+                  ) : null}
                   <div className="mt-6 flex flex-wrap justify-center gap-3">
                     <Button asChild>
                       <Link href="/">
@@ -240,14 +282,8 @@ function WorkspacePageContent() {
               agentRuns={workflowAgentRuns}
               isPolling={isPolling}
               onViewRun={setSelectedExecutionId}
-              className="min-h-0 flex-1 basis-0"
+              className="min-h-0 flex-1"
             />
-
-            <Separator className="shrink-0" />
-
-            <div className="flex max-h-[min(360px,42vh)] min-h-0 shrink-0 flex-col overflow-hidden">
-              <DecisionPanel workflowId={activeWorkflowId} />
-            </div>
           </aside>
         </div>
         </div>

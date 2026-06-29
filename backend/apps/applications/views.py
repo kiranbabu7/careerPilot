@@ -223,10 +223,14 @@ class InterviewListView(APIView):
             else:
                 recent.append(plan)
 
+        active_ids = {plan.id for plan in active}
         if not upcoming_prep and plans:
-            upcoming_prep = plans[:3]
+            upcoming_prep = [
+                plan for plan in plans if plan.id not in active_ids
+            ][:3]
+        used_ids = active_ids | {plan.id for plan in upcoming_prep}
         if not recent:
-            recent = plans[:10]
+            recent = [plan for plan in plans if plan.id not in used_ids][:10]
 
         return Response(
             InterviewListResponseSerializer(

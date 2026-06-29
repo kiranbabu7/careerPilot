@@ -413,7 +413,7 @@ def complete_workflow_node(state: WorkflowGraphState, config: dict) -> WorkflowG
     workflow.completed_at = timezone.now()
     workflow.save()
 
-    plan_summary = plan_result.get("plan_summary", "")
+    plan_summary = plan_result.get("plan_summary") or result.get("plan_summary", "")
     if plan_summary:
         service.activity_service.record_workflow_started(user, workflow)
         service.memory_service.record_workflow_context(user, workflow, plan_summary)

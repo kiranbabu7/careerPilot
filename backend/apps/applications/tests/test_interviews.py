@@ -148,6 +148,42 @@ class TestInterviewAPI:
         mock_generate.assert_called_once()
         assert mock_generate.call_args.kwargs.get("interview") is not None
 
+    def test_list_prep_buckets_do_not_overlap(self, api_client, user):
+        api_client.force_authenticate(user=user)
+        interview = InterviewService().create_external(
+            user,
+            {
+                "company": "Acme Corp",
+                "job_title": "Staff Engineer",
+                "scheduled_at": timezone.now() + timedelta(days=2),
+                "outcome": "scheduled",
+            },
+        )
+        plan = InterviewPlan.objects.create(
+            user=user,
+            opportunity=interview.opportunity,
+            application=interview.application,
+            interview=interview,
+            status="completed",
+            prompt_name="interview_prep",
+            prompt_version=1,
+            model_name="local-fallback",
+            content={"prep_roadmap": ["Review APIs"]},
+            markdown="# Plan",
+        )
+
+        response = api_client.get(reverse("interview-list"))
+        assert response.status_code == status.HTTP_200_OK
+
+        active_ids = {item["id"] for item in response.data["active"]}
+        upcoming_ids = {item["id"] for item in response.data["upcoming"]}
+        recent_ids = {item["id"] for item in response.data["recent"]}
+        plan_id = str(plan.id)
+        assert plan_id in active_ids or plan_id in upcoming_ids or plan_id in recent_ids
+        assert not (active_ids & upcoming_ids)
+        assert not (active_ids & recent_ids)
+        assert not (upcoming_ids & recent_ids)
+
     def test_prep_plan_detail_still_works(self, api_client, user, workflow):
         job = Job.objects.create(
             source="test",

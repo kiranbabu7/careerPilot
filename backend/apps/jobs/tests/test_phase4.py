@@ -733,18 +733,13 @@ class TestOpportunitiesAPI:
 
     def test_workflow_job_search_rerun(self, api_client, user, workflow):
         api_client.force_authenticate(user=user)
-        with patch.object(JobSearchService, "search") as mock_search:
-            mock_search.return_value = {
-                "query": "test",
-                "location": "",
-                "discovered_count": 0,
-                "total_listings": 0,
-                "provider_summary": {"providers": {}, "errors": []},
-                "errors": [],
-                "opportunities": [],
-            }
+        with patch("apps.workflows.services.dispatch_rerun_job_search") as mock_dispatch:
             response = api_client.post(
                 reverse("workflow-job-search", kwargs={"workflow_id": workflow.id})
             )
         assert response.status_code == status.HTTP_200_OK
-        assert "job_search_execution" in response.data
+        mock_dispatch.assert_called_once()
+        assert response.data["dispatched"] is True
+        assert response.data["status"] == "running"
+        workflow.refresh_from_db()
+        assert workflow.status == "running"
